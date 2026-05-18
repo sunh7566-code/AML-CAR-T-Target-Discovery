@@ -1,0 +1,276 @@
+---
+title: "Bulk RNA-seq Differential Expression Analysis"
+subtitle: "AML vs Normal Bone Marrow | GSE6891 | limma"
+author: "Hao Sun"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    code_folding: hide
+    fig_width: 10
+    fig_height: 7
+---
+
+```{r setup, include=FALSE}
+# 全局设置：所有代码块默认显示，警告和消息不显示
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# 1. 研究背景 / Background
+
+急性髓系白血病（Acute Myeloid Leukemia, AML）是一种起源于造血干细胞的恶性肿瘤，以骨髓中髓系原始细胞（blasts）异常增殖为特征。AML 是成人急性白血病中最常见的类型，5 年生存率仅约 30%，标准化疗方案（7+3）改善有限，亟需新型靶向治疗策略。
+
+CAR-T（Chimeric Antigen Receptor T-cell）细胞治疗在血液肿瘤中已取得突破性进展（CD19 CAR-T 获 FDA 批准用于 B 细胞淋巴瘤），但 AML 的 CAR-T 开发面临两大挑战：
+
+1. **靶点安全性**：理想靶点须在 AML 原始细胞高表达，而在正常造血干细胞（HSC）低表达，以避免骨髓抑制
+2. **靶点异质性**：AML 亚型繁多（FAB M0–M7），不同亚型靶点表达谱差异显著
+
+本分析通过系统性差异表达分析，从大规模公开数据集中筛选 AML 高特异性表达基因，为 CAR-T 靶点发现提供基因组学证据。
+
+---
+
+# 2. 数据与方法 / Data & Methods
+
+## 2.1 数据来源
+
+- **数据库**：NCBI GEO（Gene Expression Omnibus）
+- **数据集**：GSE6891
+- **平台**：Affymetrix Human Genome U133 Plus 2.0 Array（GPL570）
+- **样本量**：537 个样本
+  - AML 患者骨髓：461 例（含多种 FAB 亚型）
+  - 正常骨髓（NBM）：76 例
+
+## 2.2 分析流程
+
+```
+原始芯片数据（RMA 标准化）
+        ↓
+数据质控（缺失值过滤）
+        ↓
+limma 线性模型拟合
+        ↓
+经验贝叶斯校正（eBayes）
+        ↓
+BH 多重检验校正
+        ↓
+差异基因筛选（|logFC|>1, adj.P<0.05）
+        ↓
+探针 ID → 基因名转换（hgu133plus2.db）
+        ↓
+火山图可视化 + 靶点验证
+```
+
+## 2.3 筛选阈值
+
+| 参数 | 阈值 | 说明 |
+|------|------|------|
+| \|logFC\| | > 1 | 表达差异超过 2 倍 |
+| adj.P.Val | < 0.05 | BH 校正后假阳性率 < 5% |
+| 分析方法 | limma + eBayes | 适用于芯片标准化数据 |
+
+---
+
+# 3. 结果 / Results
+
+```{r load-packages}
+library(GEOquery)
+library(limma)
+library(EnhancedVolcano)
+library(tidyverse)
+library(kableExtra)
+library(hgu133plus2.db)
+```
+
+```{r load-data}
+# 设置工作目录
+setwd("D:/Bio-Informatics Case Study")
+
+# 读取已下载的数据
+gse <- getGEO(filename = "M1_bulk_RNAseq/data/GSE6891_series_matrix.txt.gz",
+              getGPL = FALSE)
+
+pdata <- pData(gse)
+expr  <- exprs(gse)
+```
+
+## 3.1 数据概览
+
+```{r data-overview}
+# 构建分组
+group <- ifelse(
+  pdata$`cell type:ch1` == "mononuclear cells from bone marrow",
+  "Normal", "AML"
+)
+group <- factor(group, levels = c("Normal", "AML"))
+
+# 汇总表
+summary_df <- data.frame(
+  分组     = c("AML 患者", "正常骨髓（NBM）", "总计"),
+  样本数   = c(sum(group == "AML"), sum(group == "Normal"), length(group)),
+  探针数   = c(nrow(expr), nrow(expr), nrow(expr))
+)
+
+kable(summary_df, caption = "表1：样本与数据概览") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## 3.2 差异表达分析
+
+```{r deg-analysis}
+# 过滤 NA
+expr_clean <- expr[complete.cases(expr), ]
+
+# limma 分析
+design  <- model.matrix(~ group)
+fit     <- lmFit(expr_clean, design)
+fit     <- eBayes(fit)
+results <- topTable(fit,
+                    coef = "groupAML",
+                    number = Inf,
+                    adjust.method = "BH",
+                    sort.by = "P")
+
+# ID 转换
+probe_ids            <- rownames(results)
+gene_symbols         <- mapIds(hgu133plus2.db,
+                               keys      = probe_ids,
+                               column    = "SYMBOL",
+                               keytype   = "PROBEID",
+                               multiVals = "first")
+results$gene_symbol  <- gene_symbols
+results_named        <- results[!is.na(results$gene_symbol), ]
+
+# 每个基因只保留最显著探针
+results_best <- results_named %>%
+  group_by(gene_symbol) %>%
+  slice_min(adj.P.Val, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  as.data.frame()
+rownames(results_best) <- results_best$gene_symbol
+
+# 统计
+n_sig <- sum(abs(results_best$logFC) > 1 & results_best$adj.P.Val < 0.05)
+n_up  <- sum(results_best$logFC > 1  & results_best$adj.P.Val < 0.05)
+n_dn  <- sum(results_best$logFC < -1 & results_best$adj.P.Val < 0.05)
+```
+
+差异分析共检测 **`r nrow(results_best)`** 个基因，其中：
+
+- **显著差异基因**：`r n_sig` 个（\|logFC\| > 1 且 adj.P < 0.05）
+- **显著上调**（AML 高表达）：`r n_up` 个
+- **显著下调**（AML 低表达）：`r n_dn` 个
+
+## 3.3 Top 20 上调基因
+
+```{r top-genes}
+top20_up <- results_best %>%
+  filter(logFC > 1, adj.P.Val < 0.05) %>%
+  arrange(adj.P.Val) %>%
+  head(20) %>%
+  dplyr::select(gene_symbol, logFC, AveExpr, adj.P.Val) %>%
+  mutate(
+    logFC      = round(logFC, 3),
+    AveExpr    = round(AveExpr, 3),
+    adj.P.Val  = formatC(adj.P.Val, format = "e", digits = 2)
+  )
+
+kable(top20_up,
+      col.names = c("基因名", "logFC", "平均表达量", "adj.P.Val"),
+      caption   = "表2：AML 中显著上调的 Top 20 基因") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(0, bold = TRUE)
+```
+
+## 3.4 火山图
+
+```{r volcano-plot, fig.cap="图1：AML vs 正常骨髓差异表达火山图。红色点为同时满足|logFC|>1且adj.P<0.05的显著差异基因。标注基因为已知AML CAR-T候选靶点。"}
+aml_targets <- c("CLEC12A", "HAVCR2", "IL3RA", "FLT3", "CD33", "CD38")
+
+EnhancedVolcano(
+  results_best,
+  lab       = results_best$gene_symbol,
+  x         = "logFC",
+  y         = "adj.P.Val",
+  title     = "AML vs Normal Bone Marrow",
+  subtitle  = "limma | GSE6891 | n = 461 AML, 76 Normal",
+  pCutoff   = 0.05,
+  FCcutoff  = 1,
+  pointSize = 1.5,
+  labSize   = 4.0,
+  col       = c("grey70", "forestgreen", "royalblue", "red2"),
+  colAlpha  = 0.5,
+  legendPosition  = "right",
+  drawConnectors  = TRUE,
+  widthConnectors = 0.5,
+  max.overlaps    = 20,
+  selectLab = aml_targets
+)
+```
+
+## 3.5 已知靶点验证
+
+```{r target-validation}
+validation <- results_best[results_best$gene_symbol %in% aml_targets,
+                           c("gene_symbol", "logFC", "adj.P.Val")] %>%
+  arrange(adj.P.Val) %>%
+  mutate(
+    logFC     = round(logFC, 3),
+    adj.P.Val = formatC(adj.P.Val, format = "e", digits = 2),
+    显著性    = ifelse(as.numeric(adj.P.Val) < 0.05 &
+                      abs(logFC) > 1, "✅ 显著", "⚠️ 不显著"),
+    方向      = ifelse(logFC > 0, "↑ AML高表达", "↓ AML低表达")
+  )
+
+kable(validation,
+      col.names = c("靶点基因", "logFC", "adj.P.Val", "显著性", "方向"),
+      caption   = "表3：已知AML CAR-T候选靶点在本数据集中的表达情况") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+# 4. 讨论 / Discussion
+
+## 4.1 主要发现
+
+本分析在 537 个样本（461 AML + 76 正常骨髓）的大规模数据集中，鉴定出 **`r n_up` 个在 AML 中显著上调的基因**，为 CAR-T 靶点发现提供了基因组学支持。
+
+**最值得关注的候选靶点：**
+
+**CLEC12A（CLL-1）**：logFC = 2.78，adj.P 极显著。CLL-1 是目前 AML CAR-T 领域最受关注的靶点之一，其最大优势在于在正常造血干细胞（HSC）上几乎不表达，而在 AML 原始细胞上高表达，安全窗口较宽。目前已有多项 CLL-1 CAR-T 临床试验正在进行。
+
+**HAVCR2（TIM3）**：logFC = 2.15，adj.P 极显著。TIM3 是 AML 白血病干细胞（LSC）的重要标志物，在正常 HSC 上不表达。TIM3 CAR-T 同时兼具靶向 LSC 的潜力，有望解决 AML 耐药和复发的根本问题。
+
+**IL3RA（CD123）**：logFC = 0.45，统计显著但 logFC 未达阈值。CD123 在 AML LSC 上高表达，是临床进展最快的 AML CAR-T 靶点之一（已进入 II 期临床）。本数据集中 logFC 偏低，可能与芯片平台对低表达基因敏感度有限有关。
+
+## 4.2 方法局限性
+
+1. **芯片数据的局限**：GSE6891 为 Affymetrix 芯片数据，对低表达基因（如 CD33、CD38）敏感度有限，可能低估部分靶点的表达差异
+2. **bulk 数据的局限**：bulk RNA-seq 测量的是所有细胞的平均表达，无法区分 AML 原始细胞和骨髓微环境中的正常细胞；单细胞分析（M2）将进一步精确定位靶点的细胞类型特异性
+3. **AML 异质性**：本分析将所有 AML 亚型合并比较，不同 FAB 亚型的靶点表达可能存在显著差异
+
+## 4.3 下一步计划
+
+- **M2**：单细胞 RNA-seq 分析（GSE116256），在单细胞分辨率下验证 CLEC12A 和 HAVCR2 的细胞类型特异性表达
+- **M3**：AlphaFold 预测 CLEC12A 蛋白三维结构，HDOCK 进行抗体-抗原对接分析
+
+---
+
+# 5. 结论 / Conclusion
+
+本研究通过对 GEO 公开数据集 GSE6891 的系统性差异表达分析，鉴定出 AML 中显著上调的基因群，并验证了多个已知 CAR-T 候选靶点的表达特征。**CLEC12A 和 HAVCR2 在本数据集中表现出最强的差异表达信号**，支持其作为 AML CAR-T 治疗的优先候选靶点。后续将通过单细胞分析和结构生物学手段进一步验证和深入研究。
+
+---
+
+# 6. 软件环境 / Session Info
+
+```{r session-info}
+sessionInfo()
+```

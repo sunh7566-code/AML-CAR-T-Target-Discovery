@@ -1,0 +1,7 @@
+M1_bulk_RNAseq/data/*.gz
+M1_bulk_RNAseq/data/*.txt
+*.RData
+*.rda
+.Rhistory
+.RData
+.Rproj.user/
