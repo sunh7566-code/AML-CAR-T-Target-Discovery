@@ -1,0 +1,338 @@
+---
+title: "M3: CLEC12A 蛋白质结构预测与 CAR-T 抗体分子对接分析"
+subtitle: "AML CAR-T 靶点发现项目 — 里程碑三"
+author: "Hao Sun"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    fig_caption: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+---
+
+# 项目背景与目标
+
+## 研究背景
+
+急性髓系白血病（Acute Myeloid Leukemia, AML）是最常见的成人急性白血病，5年生存率仅约30%。CAR-T（Chimeric Antigen Receptor T cell）细胞疗法通过将T细胞重定向至肿瘤细胞表面的特异性抗原，已在淋巴系肿瘤中取得突破性进展，但在AML中的应用仍面临**缺乏理想靶点**的瓶颈。
+
+## M1 + M2 关键结果回顾
+
+在前两个里程碑中，我们通过多组学分析鉴定了 AML 候选 CAR-T 靶点：
+
+| 里程碑 | 分析方法 | CLEC12A 结果 |
+|--------|----------|-------------|
+| **M1** | Bulk RNA-seq (limma/GSE6891) | logFC = **2.78**（最显著上调基因） |
+| **M2** | scRNA-seq (Scanpy/GSE116256) | AML vs Normal = **2.10x** |
+
+**CLEC12A（CLL-1/MICL）** 在两个独立分析中均位列前茅，成为本里程碑的核心研究对象。
+
+## M3 目标
+
+1. 利用 AlphaFold3 预测 CLEC12A 胞外域三维结构
+2. 基于晶体结构数据库（PDB）获取实验验证的参考结构
+3. 利用 ClusPro 进行 CLEC12A 与 50C1 抗体 Fab 的蛋白质-蛋白质对接
+4. 分析结合界面，评估 CLEC12A 作为 CAR-T 靶点的结构可行性
+
+---
+
+# 数据与工具
+
+## 蛋白质序列来源
+
+**CLEC12A（人类）**
+
+- UniProt ID: **Q5QGZ9**（Swiss-Prot 审核条目）
+- 蛋白全名: C-type lectin domain family 12 member A
+- 全长: 265 氨基酸
+- 结构域组成:
+  - 胞内区: aa 1–10
+  - 跨膜区: aa 11–31
+  - **胞外区: aa 32–265**（CAR-T 抗体识别区域）
+
+用于 AlphaFold 预测的序列为胞外区（200 aa），去除跨膜区以提高结构预测质量。
+
+## 实验结构参考
+
+| PDB ID | 内容 | 分辨率 |
+|--------|------|--------|
+| **8W9J** | CLEC12A 胞外域 + 50C1 抗体 Fab 复合物（晶体结构） | 3.50 Å |
+| **8JAH** | CLEC12A C-type lectin 结构域（apo 形式） | — |
+
+> 8W9J 为本研究的核心参考结构，由 Mori et al. (2024) 发表于 *International Immunology*，
+> 描述了 50C1 抗体与 CLEC12A 的识别机制。
+
+## 分析工具
+
+| 工具 | 版本/来源 | 用途 |
+|------|-----------|------|
+| AlphaFold Server | alphafoldserver.com | 蛋白质结构预测 |
+| RCSB PDB | rcsb.org | 实验结构下载 |
+| ClusPro | cluspro.bu.edu | 蛋白质-蛋白质对接 |
+| BIOVIA Discovery Studio | v4.5 | 结构可视化与相互作用分析 |
+| Python 3 | — | PDB 文件预处理 |
+
+---
+
+# CLEC12A 结构分析
+
+## AlphaFold3 结构预测
+
+将 CLEC12A 胞外域序列（200 aa）提交至 AlphaFold Server（Job name: `CLEC12A_extracellular`），
+预测结果如下：
+
+### 预测质量评估
+
+| 指标 | 数值 | 解读 |
+|------|------|------|
+| **pTM** | **0.75** | 整体折叠可信度良好（>0.7 即可用，>0.8 为优秀） |
+| pLDDT（主体区域） | >70（蓝/青色） | 绝大多数残基处于"Confident"以上 |
+| PAE 图 | 整体偏低（绿色） | 各结构域相对位置预测可靠 |
+
+**图1: AlphaFold3 预测的 CLEC12A 胞外域结构（pTM = 0.75）**
+
+> *注：蓝色区域 pLDDT > 90（Very high），青色区域 pLDDT 70-90（Confident），黄色区域 pLDDT 50-70（Low）*
+
+### 结构特征解读
+
+预测结构呈现典型的 **C-type lectin receptor（CLR）** 折叠：
+
+- **C-type lectin 结构域（CRD）**：位于胞外端，包含特征性的 β-sheet 核心和多个 loop 区，是抗体识别的主要区域
+- **Stalk 区（茎部）**：长 α-helix 结构，将 CRD 托举远离细胞膜表面，有利于抗体可及性
+- 整体构型与 CLEC7A、CLEC4E 等同家族蛋白高度一致
+
+## 与实验结构对比（PDB 8W9J）
+
+将 AlphaFold 预测结构与 PDB 8W9J 中的 CLEC12A 链（Chain C，残基 100–254）进行比较：
+
+**图2: AlphaFold 预测结构（右）与晶体实验结构 8W9J Chain C（左）对比**
+
+> *两者均在 Discovery Studio 中以 ribbon 模式展示，颜色按二级结构着色*
+
+**关键观察：**
+
+- 两者的 CRD β-sheet 核心高度吻合，折叠拓扑一致
+- Stalk 区 α-helix 方向稍有差异（晶体堆积效应导致）
+- AlphaFold pTM=0.75 的预测质量在该区域可信，可用于对接分析
+
+> **结论**：AlphaFold3 预测的 CLEC12A 胞外域结构与实验晶体结构高度吻合，
+> 验证了预测的可信度，为后续对接分析奠定基础。
+
+---
+
+# 蛋白质-蛋白质对接
+
+## 对接设置
+
+### 结构准备
+
+从 PDB 8W9J 中提取两条独立 PDB 文件，用 Python 脚本清理链信息：
+
+| 角色 | 来源 | 链 | 残基数 |
+|------|------|----|--------|
+| **受体（Receptor）** | PDB 8W9J Chain C | CLEC12A 胞外域 | 155 aa |
+| **配体（Ligand）** | PDB 8W9J Chain L+H | 50C1 抗体 Fab | Light: 216 aa，Heavy: 218 aa |
+
+### ClusPro 对接参数
+
+| 参数 | 设置 |
+|------|------|
+| 平台 | ClusPro 2.1（Boston University） |
+| 算法 | FFT-based global docking + DARS 聚类 |
+| Scoring function | Balanced（E = 0.40E_rep − 0.40E_att + 600E_elec + 1.00E_DARS） |
+| Job ID | **1436585** |
+
+## 对接结果
+
+ClusPro 共输出 30 个聚类（Cluster 0–29），以下列出前 6 个：
+
+| Cluster | Members | Center Score | Lowest Energy |
+|---------|---------|-------------|---------------|
+| **0** | **76** | -544.8 | **-749.9** |
+| 1 | 53 | -621.8 | -669.3 |
+| 2 | 51 | -552.5 | -629.3 |
+| 3 | 47 | -547.2 | -634.4 |
+| 4 | 42 | -753.8 | -753.8 |
+| 5 | 37 | -533.3 | -633.6 |
+
+### 最优构型选择：Cluster 0
+
+**选择依据：**
+
+ClusPro 的核心评分逻辑是**聚类成员数（Members）优先于能量分数**——
+Members 数量代表该结合构型在构象采样空间中的出现频率，
+出现频率最高说明该构型热力学上最稳定、生物学上最可能真实发生。
+
+- **Cluster 0：Members = 76（最大），Lowest Energy = -749.9**
+- 虽然 Cluster 4 能量略低（-753.8），但 Members 仅 42，构型聚合性差
+- Cluster 0 同时兼顾了**稳定性**（大聚类）和**结合能**（接近最低），是最优选择
+
+## 对接结构可视化
+
+**图3: CLEC12A（橙色）与 50C1 抗体 Fab（蓝色=轻链，绿色=重链）对接结构全貌**
+
+> *Discovery Studio ribbon 模式，三条链分别着色。CLEC12A CRD 球状结构域嵌入抗体 Fab 可变区。*
+
+**图4: 结合界面分子间相互作用全貌**
+
+> *使用 Discovery Studio 2021 Non-bond Interactions Monitor，范围设为"Intermolecular (between molecules)"，
+> 仅显示 CLEC12A（Chain C）与抗体 Fab（Chain L + Chain H）之间的跨链相互作用，排除链内自身相互作用。*
+
+**图5: 结合界面关键残基放大视图**
+
+> *聚焦核心接触区域，可见氢键（绿色虚线）、碳氢键（黑色虚线）和疏水接触（粉色虚线）三类主要相互作用。*
+
+### 结合界面相互作用类型
+
+| 相互作用类型 | 颜色 | 含义 |
+|------------|------|------|
+| Conventional H-bond（传统氢键） | 绿色虚线 | 供体-受体间 N–H···O 或 O–H···N，最强极性相互作用 |
+| Carbon H-bond（碳氢键） | 黑色虚线 | C–H···O/N，弱极性，但在密集界面中贡献显著 |
+| Alkyl / Pi-Alkyl（疏水接触） | 粉色虚线 | 非极性侧链间范德华/疏水堆积 |
+| Salt Bridge（盐桥） | 橙色虚线 | 带电残基间静电相互作用（如 Arg/Lys···Asp/Glu） |
+
+### 结合界面特征
+
+- 结合界面主要位于 CLEC12A 的 **CRD 顶面**（top face），与文献报道一致
+- 抗体轻链（Chain L）和重链（Chain H）均参与界面接触，形成完整的"钳夹式"识别
+- 界面同时包含**氢键**、**碳氢键**和**疏水相互作用**，多模式结合提示高亲和力
+- 该结合位点覆盖 CLEC12A 的核心识别区域，理论上可有效阻断天然配体结合
+
+---
+
+# 讨论
+
+## CLEC12A 作为 CAR-T 靶点的结构依据
+
+基于本里程碑的结构分析，CLEC12A 具备以下优势：
+
+**1. 胞外区可及性良好**
+Stalk 区将 CRD 托举至细胞膜约 10–15 nm 处，CAR-T 的 scFv 可以充分接触靶抗原，
+不受空间位阻限制。
+
+**2. 抗体结合界面明确**
+50C1 抗体（与 CLEC12A 有晶体复合物结构）靶向 CRD 顶面，该区域在 AML 细胞表面充分暴露。
+对接结合能（Lowest Energy = -749.9）提示强烈的结合倾向。
+
+**3. 与 M1/M2 结果高度吻合**
+- M1 logFC = 2.78：AML 细胞大量过表达 CLEC12A
+- M2 倍数 = 2.10x：单细胞水平确认 AML 细胞特异性高表达
+- M3 结构分析：证实蛋白质层面的可成药性（druggability）
+
+## 局限性
+
+- 8W9J 晶体分辨率为 3.50 Å，属中等分辨率，部分侧链位置存在不确定性
+- ClusPro 对接未考虑溶剂效应和蛋白柔性（刚体对接）
+- 50C1 抗体 Fab 并非 CAR-T 的 scFv 格式，实际 CAR 构建需要进一步序列工程
+
+## 下一步（M4 方向）
+
+- 临床数据库验证：从 ClinicalTrials.gov 检索 CLEC12A CAR-T 临床试验现状
+- 孟德尔随机化（Mendelian Randomization）：因果推断 CLEC12A 表达与 AML 预后的关系
+- 表位精细分析：MD 模拟评估结合界面动态稳定性
+
+---
+
+# 总结
+
+本里程碑（M3）完成了从**基因表达→蛋白结构→分子对接**的完整结构生物信息学分析：
+
+```
+M1: CLEC12A logFC=2.78（Bulk RNA-seq）
+        ↓
+M2: CLEC12A 2.10x（scRNA-seq，AML特异性）
+        ↓
+M3: AlphaFold3 结构预测（pTM=0.75，高可信）
+        ↓
+    ClusPro 蛋白-蛋白对接（Cluster 0，Members=76，Score=-749.9）
+        ↓
+    结合界面验证：CRD顶面，氢键+疏水作用丰富
+        ↓
+结论：CLEC12A 具备成为 AML CAR-T 靶点的完整结构基础
+```
+
+---
+
+# 参考文献
+
+1. Mori S, Nagae M, Yamasaki S. (2024). Crystal structure of the complex of CLEC12A and an antibody that interferes with binding of diverse ligands. *International Immunology*, 36(6), 279–290.
+
+2. Jumper J, et al. (2021). Highly accurate protein structure prediction with AlphaFold. *Nature*, 596, 583–589.
+
+3. Kozakov D, et al. (2017). The ClusPro web server for protein–protein docking. *Nature Protocols*, 12, 255–278.
+
+4. UniProt Consortium. (2023). UniProt: the Universal Protein Knowledgebase in 2023. *Nucleic Acids Research*, 51(D1), D523–D531.
+
+5. Leong SR, et al. (2017). An anti-CD33 antibody–drug conjugate candidate targeting acute myeloid leukemia and related myeloid malignancies. *Bioengineering & Translational Medicine*.
+
+---
+
+# 附录：分析代码
+
+## PDB 链提取（Python）
+
+```python
+# 从 PDB 8W9J 复合物中提取 CLEC12A（Chain C）和抗体 Fab（Chain L+H）
+
+with open("8W9J_complex.pdb", 'r') as f:
+    lines = f.readlines()
+
+# 识别各链
+# Chain C: CLEC12A 胞外域（残基 100-254）
+# Chain L: 50C1 轻链（残基 1-216）
+# Chain H: 50C1 重链（残基 1-223）
+
+clec12a_lines = [l for l in lines if l.startswith("ATOM") and l[21] == 'C']
+fab_lines = [l for l in lines if l.startswith("ATOM") and l[21] in ('L', 'H')]
+
+# 写出受体文件
+with open("8W9J_CLEC12A_chainC.pdb", 'w') as f:
+    f.write("REMARK CLEC12A ectodomain (Chain C) from PDB 8W9J\n")
+    f.writelines(clec12a_lines)
+    f.write("END\n")
+
+# 写出配体文件
+with open("8W9J_50C1_Fab_LH.pdb", 'w') as f:
+    f.write("REMARK 50C1 anti-CLEC12A Fab (Chain L+H) from PDB 8W9J\n")
+    f.writelines(fab_lines)
+    f.write("END\n")
+```
+
+## ClusPro 结果清理（Python）
+
+```python
+# ClusPro 输出文件含多个 HEADER，DS 不兼容，需清理
+
+with open("model.000.00.pdb", 'r') as f:
+    lines = f.readlines()
+
+header_pos = [i for i, l in enumerate(lines) if l.startswith("HEADER")]
+end_pos = [i for i, l in enumerate(lines) if l.startswith("END")]
+
+seg1 = lines[header_pos[0]:end_pos[0]]   # 受体原子
+seg2 = lines[header_pos[1]+1:end_pos[1]]  # 配体原子
+
+clean = ["HEADER ClusPro Cluster0 - CLEC12A + 50C1 Fab\n"]
+clean += [l for l in seg1 if not l.startswith(("HEADER","END"))]
+clean += [l for l in seg2 if not l.startswith(("HEADER","END"))]
+clean += ["END\n"]
+
+with open("cluster0_best_clean.pdb", 'w') as f:
+    f.writelines(clean)
+```
+
+---
+
+*报告生成时间: `r Sys.time()`*
+*分析平台: Windows 11, R `r R.version$major`.`r R.version$minor`, AlphaFold3 Server, ClusPro 2.1*
