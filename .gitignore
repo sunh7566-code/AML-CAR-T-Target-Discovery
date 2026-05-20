@@ -5,3 +5,6 @@ M1_bulk_RNAseq/data/*.txt
 .Rhistory
 .RData
 .Rproj.user/
+M5_Survival/GDC_data/
+M5_Survival/*.tar.gz
+M5_Survival/*.rds
