@@ -87,7 +87,7 @@ AlphaFold 结构预测
 | RStudio Desktop（免费开源版） | ✅ 已安装 | R 的 IDE |
 | Rtools45（装在 `D:\rtools45`） | ✅ 已安装 | 编译 R 包（DESeq2 等需要） |
 | R 包：DESeq2/GEOquery/EnhancedVolcano/tidyverse 等 M1 全套 | ✅ 已安装 | M1 差异分析 |
-| conda env `scrna`（Scanpy + leiden + CellTypist 等） | 待安装（M2 开始前） | 单细胞分析 |
+| conda env `scrna`（Scanpy 1.11.5 + leiden + CellTypist + Jupyter，装在 `D:\miniconda3\envs\scrna`） | ✅ 已安装（2026-05-18） | 单细胞分析 |
 | conda env `strucbio`（PyMOL 开源版） | 待确认（M3 开始前） | 结构可视化 |
 | AutoDock Vina（`C:\Tools\vina`，加入 PATH） | 待确认（M3 开始前） | 分子对接 |
 
@@ -179,27 +179,85 @@ conda config --set show_channel_urls yes
 
 ```
 ☑ R + RStudio 装好，所有包能正常加载（✅ 2026-05-17 完成）
-□ 从 GEO 成功下载 AML 数据集（GSE6891 或 GSE37642）
-□ 跑通 DESeq2，得到 AML vs 正常骨髓差异基因表
-□ 画出至少 1 张专业火山图（PNG + PDF）
-□ 写完 RMarkdown 报告，Knit 成 HTML
-□ 把所有代码 push 到 GitHub 个人仓库
-□ 仓库 README 里说明：数据来源、方法、主要结果
+☑ 从 GEO 成功下载 AML 数据集（GSE6891，537样本，✅ 2026-05-18 完成）
+☑ 跑通 limma 差异分析，得到 AML vs 正常骨髓差异基因表（✅ 2026-05-18 完成）
+☑ 画出专业火山图 PNG + PDF（✅ 2026-05-18 完成）
+☑ 写完 RMarkdown 报告，Knit 成 HTML（✅ 2026-05-18 完成）
+☑ 把所有代码 push 到 GitHub（✅ 2026-05-18 完成）
+☑ 仓库 README 说明数据来源、方法、主要结果（✅ 2026-05-18 完成）
 ```
+
+**M1 关键结果**：CLEC12A (logFC=2.78)、HAVCR2 (logFC=2.15) 为最显著上调靶点
+**注意**：GSE6891 是微阵列数据（Affymetrix GPL570），用 limma 而非 DESeq2
 
 ---
 
 ## 📋 M2 完成检查清单
 
 ```
-□ Scanpy 环境装好，可以在 Jupyter 中运行
-□ 跑通 PBMC 3k 标准流程（练手）
-□ 处理 1 个真实癌症 scRNA-seq 数据集（≥10000 细胞）
-□ 出 UMAP 图（按聚类 + 按细胞类型各一张）
-□ 完成细胞类型注释
-□ 输出至少 5 个 CAR-T 候选靶点
-□ 整理成 Jupyter Notebook 推到 GitHub
+☑ Scanpy 环境装好（scrna env，D:\miniconda3\envs\scrna，✅ 2026-05-18 完成）
+☑ 跑通 PBMC 3k 标准流程练手（✅ 2026-05-18 完成）
+☑ 处理 GSE116256 真实 AML scRNA-seq 数据（1244个细胞，✅ 2026-05-18 完成）
+☑ 出 UMAP 图（按聚类 + 按AML/Normal）（✅ 2026-05-18 完成）
+☑ 输出 5 个 CAR-T 候选靶点（✅ 2026-05-18 完成）
+☑ 整理成 Jupyter Notebook 推到 GitHub（✅ 2026-05-18 完成）
 ```
+
+**M2 关键结果**（AML vs Normal 表达倍数）：
+- FLT3：10.54x ⭐⭐⭐
+- CD33：9.92x ⭐⭐⭐
+- IL3RA：2.73x ⭐⭐⭐
+- CLEC12A：2.10x ⭐⭐⭐
+- CD38：1.41x ⭐⭐
+
+**下一步：M4** — 临床数据库 API + 孟德尔随机化因果推断（选做）
+
+---
+
+## 📋 M3 完成检查清单
+
+```
+☑ AlphaFold3 预测 CLEC12A 胞外域结构（pTM=0.75，✅ 2026-05-19 完成）
+☑ 下载 PDB 8W9J 实验晶体结构（CLEC12A + 50C1 Fab，3.50 Å）
+☑ 提取 Chain C（CLEC12A）和 Chain L+H（50C1 Fab）
+☑ ClusPro 蛋白-蛋白对接（Job 1436585，✅ 2026-05-19 完成）
+☑ Discovery Studio 可视化 + 分子间相互作用分析（5张图）
+☑ 撰写 M3_Report.Rmd + M3_Report.docx（✅ 2026-05-20 完成）
+☑ 推送到 GitHub（✅ 2026-05-20 完成）
+```
+
+**M3 关键结果**：
+- AlphaFold3 pTM = 0.75（高可信，与 8W9J 晶体结构高度吻合）
+- ClusPro Cluster 0：Members = 76（最大聚类），Lowest Energy = -749.9
+- 结合界面：CLEC12A CRD 顶面，含氢键、碳氢键、疏水接触、盐桥四种相互作用
+- 工具链：AlphaFold Server → PDB 8W9J → ClusPro 2.1 → Discovery Studio 2021
+
+---
+
+## 📋 M4 完成检查清单
+
+```
+☑ 编写 ClinicalTrials.gov v2 API 抓取脚本（01_clinicaltrials_api.py，✅ 2026-05-20 完成）
+☑ 编写数据清洗与可视化脚本（02_analysis_viz.py，5张图，✅ 2026-05-20 完成）
+☑ 整理完整 Jupyter Notebook（M4_Part1_ClinicalTrials.ipynb，✅ 2026-05-20 完成）
+☑ 编写孟德尔随机化 RMarkdown（M4_Part2_MendelianRandomization.Rmd，✅ 2026-05-20 完成）
+○ 本地运行 01_clinicaltrials_api.py 生成真实数据（待执行）
+○ Knit MR Rmd 生成 HTML 报告（待执行，需安装 TwoSampleMR）
+○ 推送到 GitHub（待执行）
+```
+
+**M4 文件结构**（`D:\Bio-Informatics Case Study\M4_Clinical_MR\`）：
+- `01_clinicaltrials_api.py` — API 抓取脚本（本地运行）
+- `02_analysis_viz.py` — 5张可视化图
+- `M4_Part1_ClinicalTrials.ipynb` — Jupyter Notebook
+- `M4_Part2_MendelianRandomization.Rmd` — MR 因果分析
+- `README_M4_运行指南.md` — 运行步骤说明
+
+**M4 核心工具**：
+- Part1：Python requests + pandas + matplotlib（ClinicalTrials.gov v2 API）
+- Part2：R TwoSampleMR 包 + IEU Open GWAS（含离线模拟演示模式）
+
+**下一步**：本地运行 `01_clinicaltrials_api.py` 获取真实数据 → Knit M4 Part2 Rmd → push GitHub
 
 ---
 
@@ -223,5 +281,5 @@ conda config --set show_channel_urls yes
 
 ---
 
-*文件版本：v1.3 | 基于 Bioinformatics_Pipeline_SOP.md v1.1 生成*
-*更新时间：2026-05-18（项目方向由 NSCLC 调整为 AML；M1 环境搭建完成，下一步从 GEO 下载 AML 数据集）*
+*文件版本：v1.6 | 基于 Bioinformatics_Pipeline_SOP.md v1.1 生成*
+*更新时间：2026-05-20（M1 ✅ + M2 ✅ + M3 ✅ + M4 脚本全部编写完成；待本地运行 API 脚本并 push GitHub）*
