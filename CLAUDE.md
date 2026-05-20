@@ -63,16 +63,23 @@ AlphaFold 结构预测
 
 ---
 
-## 🏁 四个里程碑
+## 🏁 十个里程碑
 
-| 里程碑 | 主题 | 主要技术栈 | 交付物 | 预计时长 |
-|--------|------|------------|--------|----------|
-| **M1** | Bulk RNA-seq 差异分析 | R + DESeq2 | 火山图 + RMarkdown 报告 | 2–3 周 |
-| **M2** | 单细胞 RNA-seq 靶点定位 | Python + Scanpy | UMAP 图 + 候选靶点清单 | 3–4 周 |
-| **M3** | 蛋白质结构 + 分子对接 | AlphaFold + PyMOL + AutoDock Vina | 3D 结构图 + 结合能数据 | 2–3 周 |
-| **M4** | 临床数据库 API + 因果推断（选做） | Python (requests) + R (TwoSampleMR) | 临床试验分析报告 + MR 因果图 | 3–4 周 |
+| 里程碑 | 主题 | 主要技术栈 | 交付物 | 状态 |
+|--------|------|------------|--------|------|
+| **M1** | Bulk RNA-seq 差异分析 | R + limma | 火山图 + RMarkdown 报告 | ✅ 完成 |
+| **M2** | 单细胞 RNA-seq 靶点定位 | Python + Scanpy | UMAP 图 + 候选靶点清单 | ✅ 完成 |
+| **M3** | 蛋白质结构 + 分子对接 | AlphaFold3 + ClusPro | 3D 结构图 + 结合能数据 | ✅ 完成 |
+| **M4** | 临床数据库 API + MR 因果推断 | Python + R TwoSampleMR | 临床试验报告 + MR 因果图 | ✅ 完成 |
+| **M5** | 生存分析 + 预后模型 | R + survival + TCGAbiolinks | K-M 曲线 + Cox 回归报告 | 🔲 进行中 |
+| **M6** | 基因组变异分析（WES/MAF） | R + maftools | 瀑布图 + oncoprint | 🔲 待开始 |
+| **M7** | 免疫微环境分析（TME） | R + IOBR / CIBERSORT | 免疫细胞比例图 | 🔲 待开始 |
+| **M8** | DNA 甲基化 / 表观基因组 | R + minfi + ChAMP | 甲基化差异热图 | 🔲 待开始 |
+| **M9** | 空间转录组 | Python + Squidpy | 空间表达图 | 🔲 待开始 |
+| **M10** | 多组学整合 | Python + MOFA+ / R + MOFA2 | 整合因子图 + 最终靶点排名 | 🔲 待开始 |
 
 **每个里程碑独立可交付，完成 M1 即可写进简历。**
+**终极目标：将 M1-M10 整合为半自动化 pipeline（详见 SOP Part 15）。**
 
 ---
 
@@ -257,7 +264,119 @@ conda config --set show_channel_urls yes
 - Part1：Python requests + pandas + matplotlib（ClinicalTrials.gov v2 API）
 - Part2：R TwoSampleMR 包 + IEU Open GWAS（含离线模拟演示模式）
 
-**下一步**：本地运行 `01_clinicaltrials_api.py` 获取真实数据 → Knit M4 Part2 Rmd → push GitHub
+**M4 已全部完成（2026-05-20）**：API 数据抓取 ✅ → 可视化 5 张图 ✅ → MR 报告 ✅ → push GitHub ✅
+
+---
+
+## 📋 M5 完成检查清单（生存分析）
+
+```
+○ 安装 TCGAbiolinks / survival / survminer
+○ 下载 TCGA-LAML 表达矩阵 + 临床数据
+○ 构造生存数据框（OS_time + OS_status）
+○ 按中位数分组，对 5 个候选靶点画 K-M 曲线
+○ 单变量 Cox 回归，输出 HR 表
+○ 整合进 M5_Survival_Analysis.Rmd，Knit HTML
+○ push GitHub
+```
+
+**数据集**：TCGA-LAML（约 150 例，含随访数据，TCGAbiolinks 自动下载）
+**目录**：`D:\Bio-Informatics Case Study\M5_Survival\`
+
+---
+
+## 📋 M6 完成检查清单（基因组变异分析）
+
+```
+○ 安装 maftools
+○ 下载 TCGA-LAML MAF 文件
+○ 画 oncoprint（Top 20 突变基因）
+○ 聚焦 FLT3 / NPM1 / DNMT3A 突变类型细分
+○ 突变共现 / 互斥矩阵
+○ FLT3 突变亚组 vs FLT3 mRNA 表达量箱线图（整合 M5 数据）
+○ push GitHub
+```
+
+**目录**：`D:\Bio-Informatics Case Study\M6_Mutation\`
+
+---
+
+## 📋 M7 完成检查清单（免疫微环境）
+
+```
+○ 安装 IOBR 包
+○ 准备 TCGA-LAML TPM 矩阵（从 M5 数据转换）
+○ 运行 CIBERSORT / xCell 免疫细胞反卷积
+○ 热图：样本 × 免疫细胞类型
+○ 靶点表达 vs CD8+ T 细胞比例相关性散点图
+○ push GitHub
+```
+
+**目录**：`D:\Bio-Informatics Case Study\M7_TME\`
+
+---
+
+## 📋 M8 完成检查清单（DNA 甲基化）
+
+```
+○ 安装 minfi / ChAMP / EPIC 注释包
+○ 下载 GEO 甲基化数据集 IDAT 文件（GSE69065 或类似）
+○ 读取 IDAT，归一化，质控
+○ 差异甲基化位点（DMP）分析
+○ 靶点启动子区域甲基化热图
+○ 甲基化 vs 表达量相关性（整合 M5）
+○ push GitHub
+```
+
+**目录**：`D:\Bio-Informatics Case Study\M8_Methylation\`
+
+---
+
+## 📋 M9 完成检查清单（空间转录组）
+
+```
+○ 安装 Squidpy / spatialdata（conda activate scrna）
+○ 确定数据集（GSE174448 或 10x 官方示例）
+○ 读取 Visium 数据，QC + 预处理
+○ 靶点在组织切片上的空间表达图
+○ Moran's I 空间自相关分析
+○ cell2location 细胞类型解卷积（可选）
+○ push GitHub
+```
+
+**目录**：`D:\Bio-Informatics Case Study\M9_SpatialTranscriptomics\`
+
+---
+
+## 📋 M10 完成检查清单（多组学整合）
+
+```
+○ 安装 MOFA2（R）+ mofapy2（Python）
+○ 整理各组学矩阵，对齐样本 ID
+○ 创建 MOFA 对象，训练模型
+○ 解释因子（方差解释图 + 因子载荷图）
+○ 输出最终靶点综合评分排名表
+○ push GitHub
+```
+
+**目录**：`D:\Bio-Informatics Case Study\M10_MultiOmics\`
+
+---
+
+## 📋 自动化 Pipeline 检查清单
+
+```
+○ 建立 auto_pipeline/ 目录结构
+○ 编写 config.yaml（完成 M5-M7 后开始）
+○ 将 M1 Rmd 改写为接受命令行参数的 R 脚本
+○ 将 M2 ipynb 改写为 Python 脚本
+○ 依次改写 M4-M10 各模块
+○ 编写 run_pipeline.py 调度器
+○ 端到端测试：用新数据集跑全流程
+○ 写 README，发布为 GitHub 开源工具
+```
+
+**详细架构**：见 `Bioinformatics_Pipeline_SOP.md` Part 15
 
 ---
 
@@ -281,5 +400,5 @@ conda config --set show_channel_urls yes
 
 ---
 
-*文件版本：v1.6 | 基于 Bioinformatics_Pipeline_SOP.md v1.1 生成*
-*更新时间：2026-05-20（M1 ✅ + M2 ✅ + M3 ✅ + M4 脚本全部编写完成；待本地运行 API 脚本并 push GitHub）*
+*文件版本：v2.0 | 基于 Bioinformatics_Pipeline_SOP.md v2.0 生成*
+*更新时间：2026-05-20（M1-M4 全部完成 ✅；M5-M10 检查清单已建立；自动化 Pipeline 架构已规划）*

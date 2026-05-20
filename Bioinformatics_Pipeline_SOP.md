@@ -1842,6 +1842,1106 @@ ggsave('figures/mr_scatter.png', p1[[1]])
 
 ---
 
+# Part 9：里程碑 5 — 生存分析与预后模型
+
+## 9.1 目标
+
+用 **TCGA-LAML**（约 200 例 AML 患者，含随访数据）验证：
+> M1/M2 筛选出的候选靶点（CLEC12A、FLT3、CD33 等）高表达患者，OS（总生存期）是否显著更短？
+
+这一步让整个 portfolio 逻辑闭环：**从发现靶点 → 证明靶点与预后相关**。
+
+## 9.2 数据来源
+
+| 数据 | 获取方式 | 说明 |
+|------|----------|------|
+| TCGA-LAML 表达矩阵 | `TCGAbiolinks` R 包自动下载 | RNA-seq count 数据，~150 例 |
+| TCGA-LAML 临床数据 | `TCGAbiolinks` 同步下载 | 含 OS 天数、死亡状态 |
+
+不需要手动去 TCGA 官网下载，R 包全自动搞定。
+
+## 9.3 环境安装
+
+```r
+# 在 RStudio Console 运行（首次）
+if (!require("BiocManager")) install.packages("BiocManager")
+BiocManager::install("TCGAbiolinks")
+install.packages(c("survival", "survminer", "dplyr", "ggplot2"))
+```
+
+## 9.4 分析步骤（逐步操作）
+
+### Step 1：下载 TCGA-LAML 数据
+
+```r
+library(TCGAbiolinks)
+library(dplyr)
+
+# 查询 TCGA-LAML RNA-seq 数据（STAR counts）
+query <- GDCquery(
+  project      = "TCGA-LAML",
+  data.category = "Transcriptome Profiling",
+  data.type    = "Gene Expression Quantification",
+  workflow.type = "STAR - Counts"
+)
+
+# 下载（第一次运行需要几分钟，下载到 GDCdata/ 目录）
+GDCdownload(query, method = "api", files.per.chunk = 10)
+
+# 整理成表达矩阵
+expr_data <- GDCprepare(query)
+
+# 提取 count 矩阵（行=基因，列=样本）
+count_mat <- assay(expr_data, "unstranded")
+```
+
+### Step 2：下载临床数据
+
+```r
+# 下载临床信息
+clinical <- GDCquery_clinic(project = "TCGA-LAML", type = "clinical")
+
+# 关键列：
+# submitter_id      → 样本 ID
+# days_to_death     → 死亡时间（天）
+# days_to_last_follow_up → 末次随访时间
+# vital_status      → "Dead" or "Alive"
+
+# 构造生存数据框
+surv_df <- clinical %>%
+  transmute(
+    sample_id = submitter_id,
+    OS_time   = ifelse(!is.na(days_to_death), days_to_death, days_to_last_follow_up),
+    OS_status = ifelse(vital_status == "Dead", 1, 0)
+  ) %>%
+  filter(!is.na(OS_time), OS_time > 0)
+```
+
+### Step 3：提取靶点表达量，分高低组
+
+```r
+library(SummarizedExperiment)
+
+# 目标靶点列表（与 M1/M2 结果对应）
+targets <- c("CLEC12A", "FLT3", "CD33", "CD123", "CD38")
+
+# 从表达矩阵提取（rownames 是 Ensembl ID，需要转换）
+# 方法：用 rowData 中的 gene_name 列匹配
+gene_info <- rowData(expr_data)
+
+for (gene in targets) {
+  # 找到对应行
+  idx <- which(gene_info$gene_name == gene)
+  if (length(idx) == 0) { message("未找到: ", gene); next }
+
+  # 提取该基因表达量（取第一个匹配）
+  expr_vec <- count_mat[idx[1], ]
+
+  # 样本 ID 对齐（TCGA 样本 ID 取前 12 位）
+  names(expr_vec) <- substr(names(expr_vec), 1, 12)
+
+  # 按中位数分高低组
+  median_val <- median(expr_vec, na.rm = TRUE)
+
+  # 合并到 surv_df
+  surv_df[[paste0(gene, "_expr")]] <- expr_vec[surv_df$sample_id]
+  surv_df[[paste0(gene, "_group")]] <- ifelse(
+    surv_df[[paste0(gene, "_expr")]] >= median_val, "High", "Low"
+  )
+}
+```
+
+### Step 4：Kaplan-Meier 曲线
+
+```r
+library(survival)
+library(survminer)
+
+# 对每个靶点画 K-M 曲线
+plot_km <- function(gene, df) {
+  group_col <- paste0(gene, "_group")
+  df_clean  <- df[!is.na(df[[group_col]]), ]
+
+  fit <- survfit(
+    Surv(OS_time, OS_status) ~ df_clean[[group_col]],
+    data = df_clean
+  )
+
+  p <- ggsurvplot(
+    fit,
+    data          = df_clean,
+    pval          = TRUE,          # 显示 log-rank p 值
+    pval.method   = TRUE,
+    conf.int      = TRUE,
+    risk.table    = TRUE,          # 底部风险表
+    palette       = c("#C44E52", "#4C72B0"),
+    legend.labs   = c("High", "Low"),
+    legend.title  = paste(gene, "expression"),
+    title         = paste0("Overall Survival by ", gene, " Expression\n(TCGA-LAML, n=", nrow(df_clean), ")"),
+    xlab          = "Time (days)",
+    ylab          = "Survival Probability",
+    ggtheme       = theme_bw()
+  )
+  return(p)
+}
+
+# 批量生成并保存
+dir.create("M5_Survival/figures", recursive = TRUE, showWarnings = FALSE)
+
+for (gene in targets) {
+  p <- plot_km(gene, surv_df)
+  ggsave(
+    filename = paste0("M5_Survival/figures/KM_", gene, ".png"),
+    plot     = print(p),
+    width = 8, height = 8, dpi = 150
+  )
+  message("✅ 保存: KM_", gene, ".png")
+}
+```
+
+### Step 5：Cox 多变量回归
+
+```r
+# 单变量 Cox（每个靶点独立检验）
+cox_results <- list()
+
+for (gene in targets) {
+  expr_col <- paste0(gene, "_expr")
+  df_clean <- surv_df[!is.na(surv_df[[expr_col]]), ]
+
+  # log2 转换表达量（避免数值范围过大）
+  df_clean$expr_log2 <- log2(df_clean[[expr_col]] + 1)
+
+  cox_fit <- coxph(Surv(OS_time, OS_status) ~ expr_log2, data = df_clean)
+  s <- summary(cox_fit)
+
+  cox_results[[gene]] <- data.frame(
+    Gene    = gene,
+    HR      = exp(coef(cox_fit)),
+    HR_lower = exp(confint(cox_fit)[1]),
+    HR_upper = exp(confint(cox_fit)[2]),
+    pval    = s$coefficients[, "Pr(>|z|)"]
+  )
+}
+
+cox_table <- do.call(rbind, cox_results)
+print(cox_table)
+
+# 保存结果
+write.csv(cox_table, "M5_Survival/cox_results.csv", row.names = FALSE)
+```
+
+### Step 6：生成 RMarkdown 报告
+
+将以上所有代码整合进 `M5_Survival/M5_Survival_Analysis.Rmd`，Knit 生成 HTML。
+
+## 9.5 预期产出
+
+- `KM_CLEC12A.png` / `KM_FLT3.png` 等 K-M 曲线（每个靶点一张）
+- `cox_results.csv` — HR 值、95% CI、p 值
+- `M5_Survival_Analysis.html` — 完整报告
+
+## 9.6 结果解读要点
+
+- **log-rank p < 0.05** → 高表达组与低表达组生存曲线显著分离
+- **HR > 1** → 高表达 = 预后差（这正是我们希望看到的，说明靶点有致病意义）
+- CLEC12A 预期 HR 较高（M1 logFC 最大）
+
+---
+
+# Part 10：里程碑 6 — 基因组变异分析（Somatic Mutation）
+
+## 10.1 目标
+
+分析 AML 体细胞突变图谱，回答：
+1. AML 最常见的驱动突变是哪些？（FLT3-ITD、NPM1、DNMT3A 等）
+2. 这些突变如何影响我们的 CAR-T 候选靶点的表达？
+3. 有无突变的亚组，靶点表达是否有差异？
+
+## 10.2 数据来源
+
+TCGA-LAML 的 MAF（Mutation Annotation Format）文件，通过 `TCGAbiolinks` 或 `maftools` 直接下载。
+
+## 10.3 环境安装
+
+```r
+BiocManager::install("maftools")
+BiocManager::install("TCGAbiolinks")
+```
+
+## 10.4 分析步骤
+
+### Step 1：下载 TCGA-LAML MAF 文件
+
+```r
+library(TCGAbiolinks)
+library(maftools)
+
+# 下载 LAML 体细胞突变数据（masked somatic mutation）
+query_maf <- GDCquery(
+  project      = "TCGA-LAML",
+  data.category = "Simple Nucleotide Variation",
+  data.type    = "Masked Somatic Mutation",
+  access       = "open"
+)
+GDCdownload(query_maf)
+maf_files <- getResults(query_maf, cols = "file_name")
+
+# 读入 maftools
+laml_maf <- read.maf(maf = "GDCdata/TCGA-LAML/.../xxx.maf.gz")
+```
+
+### Step 2：突变概览图（必做）
+
+```r
+# 汇总统计（最常突变基因）
+plotmafSummary(
+  maf     = laml_maf,
+  rmOutlier = TRUE,
+  addStat = "median",
+  dashboard = TRUE
+)
+
+# 瀑布图（Oncoprint 风格，每行=基因，每列=患者）
+oncoplot(
+  maf   = laml_maf,
+  top   = 20,           # 显示突变频率最高的 20 个基因
+  fontSize = 10
+)
+```
+
+### Step 3：聚焦 CAR-T 靶点的突变情况
+
+```r
+# 提取靶点相关突变
+targets <- c("FLT3", "CD33", "CLEC12A", "CD38", "IL3RA")
+
+# 检查靶点在 MAF 中的突变频率
+target_summary <- getGeneSummary(laml_maf) %>%
+  filter(Hugo_Symbol %in% targets)
+print(target_summary)
+
+# FLT3 突变类型细分（ITD vs TKD）
+flt3_data <- subsetMaf(laml_maf, genes = "FLT3")
+plotVaf(maf = flt3_data, vafCol = "t_vaf")
+```
+
+### Step 4：突变共现 / 互斥分析
+
+```r
+# 哪些突变倾向于同时出现（共现）或互斥出现
+somaticInteractions(
+  maf   = laml_maf,
+  top   = 15,
+  pvalue = c(0.05, 0.1)
+)
+```
+
+### Step 5：突变亚组 vs 靶点表达（整合 M5 数据）
+
+```r
+# 有 FLT3 突变 vs 无突变的患者，FLT3 mRNA 表达是否更高？
+flt3_mutated <- getSampleSummary(laml_maf) %>%
+  filter(FLT3 > 0) %>% pull(Tumor_Sample_Barcode)
+
+surv_df$FLT3_mut_status <- ifelse(
+  substr(surv_df$sample_id, 1, 15) %in% substr(flt3_mutated, 1, 15),
+  "Mutated", "Wild-type"
+)
+
+ggplot(surv_df %>% filter(!is.na(FLT3_expr)),
+       aes(x = FLT3_mut_status, y = log2(FLT3_expr + 1), fill = FLT3_mut_status)) +
+  geom_boxplot() +
+  ggpubr::stat_compare_means() +
+  labs(title = "FLT3 mRNA Expression: Mutated vs Wild-type",
+       y = "FLT3 expression (log2 CPM)", x = "") +
+  theme_bw()
+```
+
+## 10.5 预期产出
+
+- `fig_oncoprint_top20.png` — AML 突变全景图
+- `fig_FLT3_VAF.png` — FLT3 突变等位基因频率
+- `fig_mutation_cooccurrence.png` — 突变共现/互斥矩阵
+- `fig_FLT3_mut_vs_expr.png` — 突变 vs 表达量箱线图
+- `M6_Mutation_Analysis.html` — 完整报告
+
+---
+
+# Part 11：里程碑 7 — 免疫微环境分析（TME Deconvolution）
+
+## 11.1 目标
+
+CAR-T 疗法的疗效不仅取决于靶点表达，还取决于**肿瘤免疫微环境（TME）**：
+- 骨髓中有多少 T 细胞？NK 细胞？
+- 髓系抑制细胞（MDSC）比例高吗？（会抑制 CAR-T）
+- 候选靶点表达量与免疫细胞比例有无相关性？
+
+## 11.2 方法选择
+
+| 方法 | 工具 | 特点 |
+|------|------|------|
+| CIBERSORT | R / `IOBR` 包 | 最经典，22种免疫细胞 |
+| TIMER2.0 | 网页 / API | 快速，有可视化 |
+| xCell | R / `IOBR` 包 | 64种细胞类型，更细 |
+| ESTIMATE | R | 免疫评分 + 基质评分 |
+
+推荐用 `IOBR` 包，一个包集成所有方法。
+
+## 11.3 环境安装
+
+```r
+# IOBR 安装（集成 CIBERSORT / xCell / TIMER / ESTIMATE）
+if (!require("remotes")) install.packages("remotes")
+remotes::install_github("IOBR/IOBR")
+
+install.packages(c("ggplot2", "dplyr", "corrplot", "ggpubr"))
+```
+
+## 11.4 分析步骤
+
+### Step 1：准备输入数据（TPM 矩阵）
+
+```r
+# CIBERSORT 需要 TPM（不是 raw count）
+# 从 TCGA-LAML 数据中提取 TPM
+tpm_mat <- assay(expr_data, "tpm_unstrand")  # SummarizedExperiment 对象
+
+# 行名转换为 gene symbol（IOBR 需要 symbol）
+library(biomaRt)
+mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+gene_map <- getBM(
+  attributes = c("ensembl_gene_id", "hgnc_symbol"),
+  filters    = "ensembl_gene_id",
+  values     = rownames(tpm_mat),
+  mart       = mart
+)
+# 合并，去重，保留 symbol
+```
+
+### Step 2：运行免疫细胞反卷积
+
+```r
+library(IOBR)
+
+# 方法1：CIBERSORT（需要基准矩阵文件，IOBR 内置）
+cibersort_res <- deconvo_tme(
+  eset      = tpm_mat,        # 基因×样本 TPM 矩阵
+  method    = "cibersort",
+  arrays    = FALSE,          # RNA-seq 数据
+  perm      = 100             # 置换检验次数（越多越慢，100 够了）
+)
+
+# 方法2：xCell（更多细胞类型）
+xcell_res <- deconvo_tme(
+  eset   = tpm_mat,
+  method = "xcell"
+)
+
+# ESTIMATE 免疫评分
+estimate_res <- deconvo_tme(
+  eset   = tpm_mat,
+  method = "estimate"
+)
+```
+
+### Step 3：可视化
+
+```r
+# 热图：样本 × 免疫细胞类型
+library(pheatmap)
+pheatmap(
+  t(cibersort_res[, 2:23]),   # 22 种免疫细胞列
+  scale        = "row",
+  clustering_distance_rows = "euclidean",
+  show_colnames = FALSE,
+  main = "AML Immune Cell Composition (CIBERSORT)"
+)
+
+# 靶点表达 vs 免疫细胞比例相关性
+# 例：CLEC12A 表达与 T cell CD8+ 比例的相关性
+library(ggpubr)
+merged <- merge(
+  data.frame(sample_id = colnames(tpm_mat),
+             CLEC12A = as.numeric(tpm_mat["CLEC12A", ])),
+  cibersort_res %>% select(sample_id = SampleID, T_cells_CD8),
+  by = "sample_id"
+)
+
+ggscatter(merged, x = "CLEC12A", y = "T_cells_CD8",
+          add = "reg.line", conf.int = TRUE,
+          cor.coef = TRUE, cor.method = "spearman",
+          title = "CLEC12A Expression vs CD8+ T Cell Fraction")
+```
+
+## 11.5 预期产出
+
+- `fig_tme_heatmap.png` — 免疫细胞组成热图
+- `fig_target_vs_immune.png` — 靶点表达 vs 免疫细胞相关性
+- `tme_scores.csv` — 每个样本的免疫细胞比例数据
+- `M7_TME_Analysis.html` — 完整报告
+
+---
+
+# Part 12：里程碑 8 — DNA 甲基化 / 表观基因组分析
+
+## 12.1 目标
+
+AML 中 **DNMT3A 突变**极为常见（约 20%），会导致全局 DNA 甲基化异常。
+本分析回答：
+- 候选靶点（CLEC12A、FLT3 等）的启动子区域是否在 AML 中出现差异甲基化？
+- 甲基化状态与基因表达量是否负相关（甲基化 → 沉默）？
+
+## 12.2 数据来源
+
+GEO 上的 **Illumina EPIC array**（850K）或 **450K array** AML 数据集，推荐：
+- **GSE69065**：AML vs 正常骨髓，EPIC array
+- **GSE124413**：AML 甲基化 + 表达联合数据集
+
+## 12.3 环境安装
+
+```r
+BiocManager::install(c("minfi", "ChAMP", "IlluminaHumanMethylationEPICanno.ilm10b4.hg19"))
+install.packages(c("ggplot2", "pheatmap", "dplyr"))
+```
+
+## 12.4 分析步骤
+
+### Step 1：下载数据
+
+```r
+library(GEOquery)
+
+# 下载 GSE69065（IDAT 文件）
+gse <- getGEO("GSE69065", GSEMatrix = FALSE)
+
+# 注意：甲基化分析需要 IDAT 原始文件（不是 series_matrix）
+# 从 GEO 页面手动下载 supplementary files（IDAT.gz）
+# 放入 M8_Methylation/data/idat/ 目录
+```
+
+### Step 2：读取 IDAT，预处理
+
+```r
+library(minfi)
+
+# 读取所有 IDAT 文件
+rgSet <- read.metharray.exp(base = "M8_Methylation/data/idat/")
+
+# 质控报告
+qcReport(rgSet, sampNames = pData(rgSet)$Sample_Name,
+         pdf = "M8_Methylation/QC_report.pdf")
+
+# 归一化（Noob 方法，推荐）
+mSet <- preprocessNoob(rgSet)
+
+# 过滤低质量探针
+detP <- detectionP(rgSet)
+keep <- rowSums(detP < 0.01) == ncol(detP)
+mSet <- mSet[keep, ]
+
+# 提取 Beta 值（0-1，0=完全未甲基化，1=完全甲基化）
+beta_mat <- getBeta(mSet)
+```
+
+### Step 3：差异甲基化分析（DMP）
+
+```r
+library(limma)
+
+# 分组（AML vs Normal）
+group <- factor(pData(mSet)$disease_status)  # 按实际列名调整
+
+design <- model.matrix(~ 0 + group)
+colnames(design) <- levels(group)
+
+# M 值比 Beta 值更适合统计分析
+m_mat <- getM(mSet)
+
+fit <- lmFit(m_mat, design)
+contrast_mat <- makeContrasts(AML - Normal, levels = design)
+fit2 <- contrasts.fit(fit, contrast_mat)
+fit2 <- eBayes(fit2)
+
+# 提取差异甲基化位点（DMP）
+dmps <- topTable(fit2, num = Inf, adjust.method = "BH") %>%
+  filter(adj.P.Val < 0.05, abs(logFC) > 0.5)
+
+message("差异甲基化位点数: ", nrow(dmps))
+```
+
+### Step 4：聚焦靶点启动子区域
+
+```r
+library(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+# 获取探针注释（染色体位置、基因名、功能区域）
+anno <- getAnnotation(IlluminaHumanMethylationEPICanno.ilm10b4.hg19)
+
+# 筛选靶点启动子区域探针（TSS200 / TSS1500）
+targets <- c("CLEC12A", "FLT3", "CD33", "IL3RA", "CD38")
+target_probes <- anno %>%
+  as.data.frame() %>%
+  filter(
+    grepl(paste(targets, collapse = "|"), UCSC_RefGene_Name),
+    grepl("TSS", UCSC_RefGene_Group)   # 启动子区域
+  )
+
+# 提取靶点的 Beta 值，可视化
+beta_target <- beta_mat[rownames(beta_target) %in% target_probes$Name, ]
+pheatmap(beta_target, annotation_col = pData(mSet)[, "group", drop=FALSE],
+         main = "Promoter Methylation of CAR-T Target Genes")
+```
+
+### Step 5：甲基化 vs 表达量整合（整合 M1/M5 数据）
+
+```r
+# 对同一基因：启动子甲基化程度 vs mRNA 表达量的相关性
+# 负相关 → 甲基化导致基因沉默 → 靶点在正常细胞被沉默，AML 中去甲基化激活
+# 以 FLT3 为例
+flt3_beta <- colMeans(beta_target[grep("FLT3", rownames(beta_target)), ])
+# 与 M5 中的 FLT3_expr 合并，画散点图
+```
+
+## 12.5 预期产出
+
+- `QC_report.pdf` — 甲基化质控报告
+- `fig_methylation_heatmap.png` — 靶点启动子甲基化热图
+- `fig_methyl_vs_expr.png` — 甲基化 vs 表达量散点图
+- `dmp_results.csv` — 差异甲基化位点表
+- `M8_Methylation_Analysis.html` — 完整报告
+
+---
+
+# Part 13：里程碑 9 — 空间转录组（Spatial Transcriptomics）
+
+## 13.1 目标
+
+scRNA-seq（M2）告诉了我们**细胞类型**，但不知道这些细胞**在组织里在哪里**。
+空间转录组同时保留位置信息，回答：
+- CLEC12A 高表达的 AML 细胞，集中在骨髓的哪个区域？
+- CAR-T 进入骨髓后，需要穿透哪些细胞层才能到达靶标？
+
+## 13.2 数据来源
+
+AML 空间转录组公开数据较少，推荐：
+- **GSE174448**：骨髓 10x Visium 数据（含 AML 样本）
+- **10x Genomics 官网示例**：Human Bone Marrow（学习用）
+
+如果找不到合适的 AML 数据，可退而求其次：
+- 用正常骨髓 Visium 数据 + 把 M2 的 AML 细胞比例投影上去（deconvolution）
+
+## 13.3 环境安装
+
+```bash
+# Python 环境（在 scrna env 里追加安装）
+conda activate scrna
+pip install squidpy spatialdata
+```
+
+```r
+# R 环境（Seurat v5 支持空间数据）
+install.packages("Seurat")  # v5+
+BiocManager::install("SpatialExperiment")
+```
+
+## 13.4 分析步骤（Python / Squidpy）
+
+### Step 1：读取 10x Visium 数据
+
+```python
+import scanpy as sc
+import squidpy as sq
+import matplotlib.pyplot as plt
+
+# 读取 10x Visium 输出目录
+# 目录结构：filtered_feature_bc_matrix/ + spatial/
+adata = sc.read_visium(
+    path       = "M9_SpatialTranscriptomics/data/visium_sample/",
+    count_file = "filtered_feature_bc_matrix.h5",
+    load_images= True
+)
+
+print(adata)
+# AnnData: n_obs=spots, n_vars=genes，obs 包含空间坐标
+```
+
+### Step 2：质控与预处理
+
+```python
+# 基础 QC
+sc.pp.calculate_qc_metrics(adata, inplace=True)
+adata = adata[adata.obs["total_counts"] > 1000]
+
+# 归一化
+sc.pp.normalize_total(adata, target_sum=1e4)
+sc.pp.log1p(adata)
+
+# 高变基因
+sc.pp.highly_variable_genes(adata, n_top_genes=3000)
+
+# PCA + neighbors + UMAP（与 M2 流程一致）
+sc.pp.pca(adata)
+sc.pp.neighbors(adata)
+sc.tl.umap(adata)
+sc.tl.leiden(adata, resolution=0.5)
+```
+
+### Step 3：空间可视化靶点表达
+
+```python
+targets = ["CLEC12A", "FLT3", "CD33", "IL3RA", "CD38"]
+
+# 在组织切片上叠加基因表达（最核心的空间转录组图）
+sq.pl.spatial_scatter(
+    adata,
+    color     = targets,
+    ncols     = 3,
+    size      = 1.5,
+    cmap      = "Reds",
+    title     = [f"{g} Expression" for g in targets],
+    save      = "M9_SpatialTranscriptomics/figures/spatial_targets.png"
+)
+```
+
+### Step 4：空间自相关分析（Moran's I）
+
+```python
+# 检验某基因是否有空间聚集性（随机分布 vs 聚集分布）
+sq.gr.spatial_neighbors(adata, coord_type="generic")
+sq.gr.spatial_autocorr(adata, mode="moran", genes=targets)
+
+# 显示结果
+print(adata.uns["moranI"])
+# I 接近 1 → 高度空间聚集（高表达区域集中在某处）
+```
+
+### Step 5：细胞类型解卷积（用 M2 的 scRNA 参考）
+
+```python
+# 用 M2 的 scRNA-seq 作为参考，推断每个 Visium spot 的细胞组成
+# 工具：cell2location（最准确）
+# pip install cell2location
+
+import cell2location
+# 详见 cell2location 官方教程：
+# https://cell2location.readthedocs.io/
+```
+
+## 13.5 预期产出
+
+- `spatial_targets.png` — 靶点在组织切片上的空间表达图
+- `fig_moranI.png` — 空间自相关热图
+- `M9_Spatial_Analysis.ipynb` — 完整 Notebook
+
+---
+
+# Part 14：里程碑 10 — 多组学整合（Multi-omics Integration）
+
+## 14.1 目标
+
+整合 M1-M9 的所有数据层，用统计模型找出**跨数据层一致的信号**：
+> 哪些靶点在转录组、甲基化、突变、免疫微环境层面都有支持证据？
+
+这是整个项目的**压轴分析**，产出最终靶点排名。
+
+## 14.2 工具选择
+
+| 工具 | 适合整合的数据类型 | 特点 |
+|------|------------------|------|
+| **MOFA+** | RNA-seq + 甲基化 + 突变 | 最主流，有 Python 和 R 接口 |
+| **Seurat WNN** | scRNA + scATAC | 专门做单细胞多组学 |
+| **mixOmics** | 任意多组学 | R 包，适合有监督整合 |
+
+推荐用 **MOFA+**（Multi-Omics Factor Analysis）。
+
+## 14.3 环境安装
+
+```bash
+conda activate scrna
+pip install mofapy2
+```
+
+```r
+BiocManager::install("MOFA2")
+install.packages("reticulate")
+```
+
+## 14.4 分析步骤
+
+### Step 1：准备各组学数据矩阵
+
+```r
+library(MOFA2)
+
+# 每个数据层是一个矩阵：基因/位点 × 样本
+# 样本 ID 必须完全一致！这是最容易出错的地方
+
+# 数据层列表
+data_list <- list(
+  RNA       = rna_mat,        # 来自 M1/M5：基因×样本 log2 表达矩阵
+  Mutation  = mut_mat,        # 来自 M6：基因×样本 0/1 突变矩阵
+  Methylation = beta_mat_sub, # 来自 M8：探针×样本 Beta 值（取靶点区域）
+  TME       = tme_mat         # 来自 M7：免疫细胞类型×样本
+)
+
+# 确保样本 ID 对齐（取交集）
+common_samples <- Reduce(intersect, lapply(data_list, colnames))
+data_list <- lapply(data_list, function(x) x[, common_samples])
+```
+
+### Step 2：创建 MOFA 对象并训练
+
+```r
+# 创建 MOFA 对象
+mofa_obj <- create_mofa(data_list)
+
+# 可视化数据概况
+plot_data_overview(mofa_obj)
+
+# 设置训练参数
+model_opts <- get_default_model_options(mofa_obj)
+model_opts$num_factors <- 10   # 学习 10 个潜在因子
+
+train_opts <- get_default_training_options(mofa_obj)
+train_opts$seed        <- 42
+train_opts$maxiter     <- 1000
+
+mofa_obj <- prepare_mofa(mofa_obj,
+  model_options   = model_opts,
+  training_options = train_opts
+)
+
+# 训练模型（几分钟）
+mofa_obj <- run_mofa(mofa_obj, outfile = "M10_MultiOmics/mofa_model.hdf5")
+```
+
+### Step 3：解释因子
+
+```r
+# 每个因子解释了多少方差？
+plot_variance_explained(mofa_obj, max_r2 = 15)
+
+# Factor 1 在各数据层的载荷（哪些基因/位点贡献最大）
+plot_top_weights(mofa_obj, view = "RNA", factor = 1, nfeatures = 20)
+plot_top_weights(mofa_obj, view = "Methylation", factor = 1, nfeatures = 20)
+
+# 样本在因子空间的分布（类似 PCA，但整合了所有组学）
+plot_factor(mofa_obj, factors = c(1, 2), color_by = "AML_subtype")
+```
+
+### Step 4：最终靶点综合评分
+
+```r
+# 综合各里程碑的证据，给每个候选靶点打分
+# 评分维度（每项 0-3 分）：
+# 1. M1 logFC（差异表达倍数）
+# 2. M2 AML/Normal 表达比（单细胞层面）
+# 3. M5 HR（预后相关性，HR > 1.5 得高分）
+# 4. M6 是否在突变基因附近（突变协同）
+# 5. M7 与 CD8+ T 细胞正相关（利于 CAR-T 共同作战）
+# 6. M8 AML 中启动子去甲基化（表观激活）
+# 7. M4 临床试验数（过多 = 竞争激烈，过少 = 新兴机会）
+
+score_table <- data.frame(
+  Target   = c("CLEC12A", "FLT3", "CD33", "CD123", "CD38"),
+  M1_score = c(3, 2, 2, 2, 1),   # 根据实际结果填写
+  M2_score = c(2, 3, 3, 2, 1),
+  M5_score = c(NA, NA, NA, NA, NA),  # M5 完成后填入
+  M6_score = c(NA, NA, NA, NA, NA),
+  M7_score = c(NA, NA, NA, NA, NA),
+  M8_score = c(NA, NA, NA, NA, NA)
+)
+score_table$Total <- rowSums(score_table[, -1], na.rm = TRUE)
+score_table <- score_table %>% arrange(desc(Total))
+print(score_table)
+```
+
+## 14.5 预期产出
+
+- `mofa_model.hdf5` — 训练好的 MOFA 模型
+- `fig_variance_explained.png` — 各因子方差解释图
+- `fig_factor_weights.png` — 因子载荷图
+- `final_target_ranking.csv` — 最终靶点综合评分排名
+- `M10_MultiOmics_Integration.html` — 完整报告
+
+---
+
+# Part 15：自动化 Pipeline 设计（终极目标）
+
+## 15.1 设计理念
+
+**目标**：输入一个癌症类型 + 数据集 ID，自动运行 M1-M10 全流程，输出标准化报告。
+
+**核心原则**：
+- **半自动化**（不是全自动）：在 QC、分组确认、结果解读等关键节点设置**人工检查点**
+- **模块化**：每个里程碑是一个独立模块，可单独跑，也可串联跑
+- **配置驱动**：所有参数写进一个 `config.yaml`，换癌症类型只需改配置文件
+
+## 15.2 目录结构设计
+
+```
+auto_pipeline/
+├── config.yaml                  # 全局配置（癌症类型、数据集ID、阈值等）
+├── run_pipeline.py              # 主入口（Python 调度器）
+│
+├── modules/
+│   ├── m01_bulk_rnaseq.R        # M1 模块
+│   ├── m02_scrna.py             # M2 模块
+│   ├── m03_structure.py         # M3 接口（调用 AlphaFold API）
+│   ├── m04_clinical_mr.py       # M4 模块
+│   ├── m05_survival.R           # M5 模块
+│   ├── m06_mutation.R           # M6 模块
+│   ├── m07_tme.R                # M7 模块
+│   ├── m08_methylation.R        # M8 模块
+│   ├── m09_spatial.py           # M9 模块
+│   └── m10_multiomics.R         # M10 模块
+│
+├── utils/
+│   ├── data_download.py         # 统一数据下载函数
+│   ├── report_generator.py      # 自动生成 HTML 报告
+│   └── checkpoint.py            # 人工检查点管理
+│
+└── output/
+    ├── {cancer_type}_{date}/    # 每次运行的输出目录
+    │   ├── figures/
+    │   ├── tables/
+    │   └── report.html
+```
+
+## 15.3 config.yaml 示例
+
+```yaml
+# AML CAR-T 分析配置
+project:
+  cancer_type: "AML"
+  disease_name: "Acute Myeloid Leukemia"
+  output_dir: "output/AML_20260520"
+
+# 数据集配置
+datasets:
+  M1_bulk:    "GSE6891"
+  M2_scrna:   "GSE116256"
+  M5_M6_M7_tcga: "TCGA-LAML"
+  M8_methyl:  "GSE69065"
+  M9_spatial: "GSE174448"
+
+# 候选靶点
+targets:
+  - CLEC12A
+  - FLT3
+  - CD33
+  - IL3RA
+  - CD38
+
+# 分析阈值
+thresholds:
+  M1_logFC:   1.0
+  M1_padj:    0.05
+  M2_fold:    1.5
+  M5_pval:    0.05
+  M6_mut_freq: 0.05   # 最低突变频率阈值
+
+# 运行哪些模块（true/false）
+modules:
+  M1: true
+  M2: true
+  M3: false   # 结构分析依赖网页工具，暂不自动化
+  M4: true
+  M5: true
+  M6: true
+  M7: true
+  M8: true
+  M9: false   # 空间转录组数据依赖较多，手动运行
+  M10: true
+```
+
+## 15.4 run_pipeline.py 主调度器
+
+```python
+"""
+AML CAR-T 分析自动化 Pipeline
+用法: python run_pipeline.py --config config.yaml
+"""
+import yaml
+import subprocess
+import os
+import sys
+from datetime import datetime
+
+def run_r_module(script_path: str, config_path: str) -> bool:
+    """运行一个 R 模块脚本"""
+    cmd = ["Rscript", script_path, "--config", config_path]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"❌ 模块失败: {script_path}")
+        print(result.stderr[-2000:])
+        return False
+    print(result.stdout[-1000:])
+    return True
+
+def run_python_module(script_path: str, config_path: str) -> bool:
+    """运行一个 Python 模块脚本"""
+    cmd = [sys.executable, script_path, "--config", config_path]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"❌ 模块失败: {script_path}")
+        print(result.stderr[-2000:])
+        return False
+    print(result.stdout[-1000:])
+    return True
+
+def checkpoint(message: str) -> bool:
+    """人工检查点：暂停等待用户确认"""
+    print(f"\n{'='*60}")
+    print(f"⏸️  检查点: {message}")
+    print(f"请查看上一步的图表和日志，确认结果正常后继续")
+    answer = input("继续运行? (y/n): ").strip().lower()
+    return answer == 'y'
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument("--skip-checkpoints", action="store_true")
+    args = parser.parse_args()
+
+    # 加载配置
+    with open(args.config) as f:
+        cfg = yaml.safe_load(f)
+
+    print(f"🚀 AML 生信分析 Pipeline 启动")
+    print(f"   癌症类型: {cfg['project']['cancer_type']}")
+    print(f"   输出目录: {cfg['project']['output_dir']}")
+    print(f"   开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    modules = cfg['modules']
+    results = {}
+
+    # M1: Bulk RNA-seq
+    if modules.get('M1'):
+        print("\n▶ 运行 M1: Bulk RNA-seq 差异分析")
+        ok = run_r_module("modules/m01_bulk_rnaseq.R", args.config)
+        results['M1'] = ok
+        if ok and not args.skip_checkpoints:
+            if not checkpoint("M1 完成 — 请检查火山图，确认分组正确"):
+                print("用户终止，退出"); sys.exit(0)
+
+    # M2: scRNA-seq
+    if modules.get('M2'):
+        print("\n▶ 运行 M2: 单细胞 RNA-seq")
+        ok = run_python_module("modules/m02_scrna.py", args.config)
+        results['M2'] = ok
+        if ok and not args.skip_checkpoints:
+            if not checkpoint("M2 完成 — 请检查 UMAP 图，确认细胞聚类合理"):
+                print("用户终止，退出"); sys.exit(0)
+
+    # M4: 临床数据库
+    if modules.get('M4'):
+        print("\n▶ 运行 M4: ClinicalTrials API")
+        ok = run_python_module("modules/m04_clinical_mr.py", args.config)
+        results['M4'] = ok
+
+    # M5: 生存分析
+    if modules.get('M5'):
+        print("\n▶ 运行 M5: 生存分析")
+        ok = run_r_module("modules/m05_survival.R", args.config)
+        results['M5'] = ok
+
+    # M6: 突变分析
+    if modules.get('M6'):
+        print("\n▶ 运行 M6: 基因组变异分析")
+        ok = run_r_module("modules/m06_mutation.R", args.config)
+        results['M6'] = ok
+
+    # M7: 免疫微环境
+    if modules.get('M7'):
+        print("\n▶ 运行 M7: 免疫微环境分析")
+        ok = run_r_module("modules/m07_tme.R", args.config)
+        results['M7'] = ok
+
+    # M8: 甲基化
+    if modules.get('M8'):
+        print("\n▶ 运行 M8: DNA 甲基化分析")
+        ok = run_r_module("modules/m08_methylation.R", args.config)
+        results['M8'] = ok
+
+    # M10: 多组学整合
+    if modules.get('M10'):
+        print("\n▶ 运行 M10: 多组学整合")
+        ok = run_r_module("modules/m10_multiomics.R", args.config)
+        results['M10'] = ok
+
+    # 汇总报告
+    print(f"\n{'='*60}")
+    print("📊 Pipeline 运行汇总:")
+    for module, ok in results.items():
+        status = "✅" if ok else "❌"
+        print(f"  {status} {module}")
+    print(f"\n输出目录: {cfg['project']['output_dir']}")
+    print(f"完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+if __name__ == "__main__":
+    main()
+```
+
+## 15.5 实现路线图（分阶段）
+
+```
+阶段一（现在）：稳扎稳打，逐个手动跑
+  → 每个里程碑自己手动操作，理解每一步在做什么
+  → 积累：什么参数需要调整？什么地方容易出错？
+
+阶段二（M5-M7 完成后）：把已验证的模块脚本化
+  → 把跑通的 Rmd / ipynb 改写成可接受命令行参数的脚本
+  → 用 config.yaml 管理参数
+
+阶段三（M8-M9 完成后）：写调度器 + 自动报告
+  → 实现 run_pipeline.py
+  → 用 R Markdown / Quarto 模板自动生成 HTML 报告
+
+阶段四（M10 完成后）：打包成工具
+  → 写成 Python 包（pip install aml-pipeline）
+  → 支持换癌症类型（改 config.yaml 即可）
+  → 这就是一个可以放在 GitHub 上的开源工具，简历上写"开发了 xxx 自动化生信分析工具"
+```
+
+## 15.6 给 Claude 的提示词模板（用于新 Cowork）
+
+当你想在新 Cowork 会话里让 Claude 帮你写某个模块的自动化代码时，可以用以下模板：
+
+```
+请帮我把以下 SOP 步骤转化为可执行的自动化脚本：
+
+【SOP 来源】Bioinformatics_Pipeline_SOP.md，Part [X]
+【模块名称】M[X]_[名称]
+【输入】config.yaml 中的参数 + 上一个模块的输出文件
+【输出】figures/ 目录下的图表 + tables/ 目录下的 CSV
+【技术要求】
+- R 脚本需接受 --config 命令行参数
+- Python 脚本同上
+- 所有输出路径从 config.yaml 读取，不要硬编码
+- 每一步打印进度信息（print）
+- 遇到错误要 try-catch，打印有意义的错误信息后退出
+
+请按照 SOP 的步骤编写完整的可运行脚本。
+```
+
+---
+
+# Part 16：常见问题更新（M5-M10）
+
+| 问题 | 原因 | 解决方案 |
+|------|------|---------|
+| `TCGAbiolinks` 下载超时 | 服务器在美国，网速慢 | 用 `files.per.chunk=5` 减小并发；或挂代理 |
+| CIBERSORT 运行很慢 | 置换检验 perm=1000 太多 | 改为 `perm=100` |
+| MOFA+ 训练不收敛 | 数据量太少或因子数太多 | 减少 `num_factors`；增大 `maxiter` |
+| `read.metharray.exp` 找不到 IDAT | 路径不对 | 检查 IDAT 文件是成对的（_Red.idat + _Grn.idat）|
+| Seurat WNN 报内存错误 | 32GB 内存处理大数据集边缘 | 降低 `k.anchor`；分批处理 |
+| cell2location 安装失败 | 依赖 PyTorch | 先装 `pip install torch`，再装 cell2location |
+
+---
+
 # 📌 写在最后 / Final Notes
 
 这份 SOP 的所有代码与命令都已在 Windows 11 + Conda + R 4.6.0 环境下验证可运行。项目主题为急性髓系白血病（AML）CAR-T 靶点发现。但生信工具更新很快，**遇到与官方文档不一致时，以官方文档为准**。
