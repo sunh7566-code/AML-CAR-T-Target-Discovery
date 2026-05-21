@@ -72,7 +72,7 @@ AlphaFold 结构预测
 | **M3** | 蛋白质结构 + 分子对接 | AlphaFold3 + ClusPro | 3D 结构图 + 结合能数据 | ✅ 完成 |
 | **M4** | 临床数据库 API + MR 因果推断 | Python + R TwoSampleMR | 临床试验报告 + MR 因果图 | ✅ 完成 |
 | **M5** | 生存分析 + 预后模型 | R + survival + TCGAbiolinks | K-M 曲线 + Cox 回归报告 | ✅ 完成 |
-| **M6** | 基因组变异分析（WES/MAF） | R + maftools | 瀑布图 + oncoprint | 🔲 待开始 |
+| **M6** | 基因组变异分析（WES/MAF） | R + maftools | 瀑布图 + oncoprint | ✅ 完成 |
 | **M7** | 免疫微环境分析（TME） | R + IOBR / CIBERSORT | 免疫细胞比例图 | 🔲 待开始 |
 | **M8** | DNA 甲基化 / 表观基因组 | R + minfi + ChAMP | 甲基化差异热图 | 🔲 待开始 |
 | **M9** | 空间转录组 | Python + Squidpy | 空间表达图 | 🔲 待开始 |
@@ -303,16 +303,29 @@ conda config --set show_channel_urls yes
 ## 📋 M6 完成检查清单（基因组变异分析）
 
 ```
-○ 安装 maftools
-○ 下载 TCGA-LAML MAF 文件
-○ 画 oncoprint（Top 20 突变基因）
-○ 聚焦 FLT3 / NPM1 / DNMT3A 突变类型细分
-○ 突变共现 / 互斥矩阵
-○ FLT3 突变亚组 vs FLT3 mRNA 表达量箱线图（整合 M5 数据）
-○ push GitHub
+☑ 安装 maftools 2.28.0（✅ 2026-05-21 完成）
+☑ 用 TCGAbiolinks 批量下载 TCGA-LAML MAF（153个文件，131样本，3900条突变，✅ 2026-05-21）
+☑ 画 oncoprint Top 20（NPM1 8%、DNMT3A 6%、FLT3 5%，✅ 2026-05-21）
+☑ Lollipop 图：FLT3 激酶域热点、NPM1 C端热点、DNMT3A 多域分散（✅ 2026-05-21）
+☑ 突变共现矩阵：FLT3+DNMT3A 显著共现 p<0.05（✅ 2026-05-21）
+☑ FLT3 突变 vs mRNA 表达箱线图：p=0.255（突变影响蛋白功能非转录，✅ 2026-05-21）
+☑ push GitHub（✅ 2026-05-21）
 ```
 
+**M6 关键结果**：
+- 数据：TCGA-LAML，131样本，3900条体细胞突变，2423个突变基因
+- Top 突变基因：NPM1(8.4%) > TP53(7%) > DNMT3A(6.1%) > ASXL1(6%) > FLT3(4.6%)
+- FLT3 突变：激酶域错义突变，与 DNMT3A 显著共现（双突变预后差）
+- FLT3 DNA突变不影响 mRNA 表达量（p=0.255），突变通过功能而非转录致病
+
+**⚠️ 数据下载关键坑**：
+- GDC 单个 file_id 下载只得到单样本文件，必须用 TCGAbiolinks::GDCquery() + GDCdownload() + GDCprepare() 批量下载合并
+- 正确流程：GDCquery → GDCdownload（下载到 GDCdata/）→ GDCprepare（合并为数据框）→ read.maf()
+
 **目录**：`D:\Bio-Informatics Case Study\M6_Mutation\`
+- `01_M6_analysis.R` — 完整分析脚本
+- `M6_Report.Rmd` — RMarkdown 报告
+- `figures/` — 6张图（oncoprint + 3张lollipop + 共现矩阵 + 箱线图）
 
 ---
 
@@ -412,8 +425,13 @@ conda config --set show_channel_urls yes
 4. **代码风格**：每段代码都要有中文注释，解释"为什么这样做"不只是"做了什么"
 5. **里程碑进度**：主动跟踪当前在哪个里程碑，哪些步骤已完成
 6. **文件保存**：所有输出文件保存到 `D:\Bio-Informatics Case Study\` 下对应子目录
+7. **【重要】教学优先原则**：每次讲解步骤时，必须同时解释**为什么**这样做，而不只是说"做什么"。具体要求：
+   - 每个操作后面加一句"这样做的原因是……"或"背后的原理是……"
+   - 引入新工具/新概念时，先用一两句话说清楚它解决什么问题，再给代码
+   - 涉及生信核心概念（如标准化、差异分析、生存分析等）时，用 Hao 熟悉的药学/医学类比帮助理解
+   - 目标是让 Hao 做完每一步后，能向别人解释自己做了什么、为什么这样做，而不只是复制粘贴了代码
 
 ---
 
-*文件版本：v2.0 | 基于 Bioinformatics_Pipeline_SOP.md v2.0 生成*
-*更新时间：2026-05-20（M1-M4 全部完成 ✅；M5-M10 检查清单已建立；自动化 Pipeline 架构已规划）*
+*文件版本：v2.2 | 基于 Bioinformatics_Pipeline_SOP.md v2.0 生成*
+*更新时间：2026-05-21（M5 完成 ✅；M6 完成 ✅；增加教学优先原则）*

@@ -48,8 +48,8 @@ M10 多组学整合                     → 所有证据汇聚，最终靶点排
 | **M2** | 单细胞 RNA-seq 靶点定位 | Python / Scanpy | ✅ 完成 | UMAP + 候选靶点清单 |
 | **M3** | 蛋白质结构 + 分子对接 | AlphaFold3 / ClusPro | ✅ 完成 | 3D 结构图 + 结合能 |
 | **M4** | 临床数据库 API + MR 因果推断 | Python / R TwoSampleMR | ✅ 完成 | 临床分析报告 + MR 图 |
-| **M5** | 生存分析 + 预后模型 | R / survival / TCGAbiolinks | 🔲 进行中 | K-M 曲线 + Cox 报告 |
-| **M6** | 基因组变异分析（WES/MAF） | R / maftools | 🔲 待开始 | 瀑布图 + oncoprint |
+| **M5** | 生存分析 + 预后模型 | R / survival / TCGAbiolinks | ✅ 完成 | K-M 曲线 + Cox 报告 |
+| **M6** | 基因组变异分析（WES/MAF） | R / maftools | ✅ 完成 | 瀑布图 + oncoprint |
 | **M7** | 免疫微环境分析（TME） | R / IOBR / CIBERSORT | 🔲 待开始 | 免疫细胞比例图 |
 | **M8** | DNA 甲基化 / 表观基因组 | R / minfi / ChAMP | 🔲 待开始 | 甲基化差异热图 |
 | **M9** | 空间转录组 | Python / Squidpy | 🔲 待开始 | 空间表达图 |
@@ -78,6 +78,18 @@ M10 多组学整合                     → 所有证据汇聚，最终靶点排
 - AML CAR-T 临床试验共 90 条（ClinicalTrials.gov，2026-05-20）
 - Phase I 占主导（47条），领域仍处早期探索阶段
 - MR 分析（模拟演示）：FLT3 高表达 → AML 风险 OR ≈ 1.28
+
+### M5 生存分析（TCGA-LAML，n=130）
+- IL3RA：HR=1.711，p=0.00188 ⭐⭐（唯一显著独立预后因子）
+- FLT3：HR=1.128，p=0.241（趋势但不显著）
+- CD33 / CLEC12A / CD38：均不显著
+
+### M6 基因组变异分析（TCGA-LAML，131样本，3900条突变）
+- NPM1（8.4%）：移码插入，C端热点，AML WHO独立亚型
+- DNMT3A（6.1%）：多类型突变，表观遗传失调
+- FLT3（4.6%）：激酶域错义突变，midostaurin 靶点
+- FLT3 + DNMT3A 显著共现（p<0.05），双突变预后差
+- FLT3 突变不影响 mRNA 表达量（p=0.255），突变影响蛋白功能而非转录
 
 ---
 
@@ -111,8 +123,15 @@ AML-CAR-T-Target-Discovery/
 │   ├── M4_Part2_MendelianRandomization.Rmd
 │   └── figures/
 │
-├── M5_Survival/                       # 🔲 生存分析（进行中）
-├── M6_Mutation/                       # 🔲 基因组变异分析
+├── M5_Survival/                       # ✅ 生存分析
+│   ├── 01_download_data.R
+│   ├── 02_full_analysis.R
+│   └── figures/                       # 5张K-M曲线 + Cox森林图
+│
+├── M6_Mutation/                       # ✅ 基因组变异分析
+│   ├── 01_M6_analysis.R
+│   ├── M6_Report.Rmd
+│   └── figures/                       # 瀑布图 + lollipop图 + 共现矩阵 + 箱线图
 ├── M7_TME/                            # 🔲 免疫微环境
 ├── M8_Methylation/                    # 🔲 DNA 甲基化
 ├── M9_SpatialTranscriptomics/         # 🔲 空间转录组

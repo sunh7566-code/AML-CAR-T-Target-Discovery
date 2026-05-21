@@ -2060,111 +2060,162 @@ write.csv(cox_table, "M5_Survival/cox_results.csv", row.names = FALSE)
 
 ## 10.2 数据来源
 
-TCGA-LAML 的 MAF（Mutation Annotation Format）文件，通过 `TCGAbiolinks` 或 `maftools` 直接下载。
+TCGA-LAML 的 MAF 文件，通过 TCGAbiolinks 批量下载（153个文件，131个病人，3900条突变）。
+
+> ⚠️ **关键坑**：GDC 按病人分开存储 MAF，单个 file_id 只能得到 1 个样本。必须用 TCGAbiolinks 批量下载后合并，不能直接用 httr GET 单个文件。
 
 ## 10.3 环境安装
 
 ```r
-BiocManager::install("maftools")
-BiocManager::install("TCGAbiolinks")
+BiocManager::install("maftools")      # 已含在 TCGAbiolinks 依赖中
+# TCGAbiolinks 在 M5 已安装
+library(maftools)
+cat(as.character(packageVersion("maftools")))  # 确认版本 >= 2.28
 ```
 
-## 10.4 分析步骤
+## 10.4 分析步骤（已验证可运行）
 
-### Step 1：下载 TCGA-LAML MAF 文件
+### Step 1：批量下载并合并 TCGA-LAML MAF
 
 ```r
 library(TCGAbiolinks)
 library(maftools)
 
-# 下载 LAML 体细胞突变数据（masked somatic mutation）
-query_maf <- GDCquery(
-  project      = "TCGA-LAML",
+# 查询：TCGA-LAML 所有 masked somatic mutation 文件
+query_mut <- GDCquery(
+  project = "TCGA-LAML",
   data.category = "Simple Nucleotide Variation",
-  data.type    = "Masked Somatic Mutation",
-  access       = "open"
+  data.type = "Masked Somatic Mutation",
+  access = "open"
 )
-GDCdownload(query_maf)
-maf_files <- getResults(query_maf, cols = "file_name")
+# 共找到 153 个文件，对应 131 个唯一病人
 
-# 读入 maftools
-laml_maf <- read.maf(maf = "GDCdata/TCGA-LAML/.../xxx.maf.gz")
+# 批量下载（约 1.6 MB，<1 分钟）
+GDCdownload(
+  query = query_mut,
+  directory = "D:/Bio-Informatics Case Study/M6_Mutation/data/GDCdata"
+)
+
+# 合并为单一数据框（3900行 × 140列）
+maf_all <- GDCprepare(
+  query = query_mut,
+  directory = "D:/Bio-Informatics Case Study/M6_Mutation/data/GDCdata"
+)
+
+# 转为 maftools MAF 对象
+laml_full <- read.maf(maf = maf_all)
+
+# 验证
+cat("样本数：", nrow(getSampleSummary(laml_full)), "\n")  # 131
+cat("基因数：", nrow(getGeneSummary(laml_full)), "\n")    # 2423
 ```
 
-### Step 2：突变概览图（必做）
+### Step 2：瀑布图 / Oncoprint（Top 20 突变基因）
 
 ```r
-# 汇总统计（最常突变基因）
-plotmafSummary(
-  maf     = laml_maf,
-  rmOutlier = TRUE,
-  addStat = "median",
-  dashboard = TRUE
-)
+# 注意：maftools 2.28 的 oncoplot() 不支持 title= 参数，去掉即可
+png("D:/Bio-Informatics Case Study/M6_Mutation/figures/01_waterfall_top20.png",
+    width = 3000, height = 2000, res = 200)
+oncoplot(maf = laml_full, top = 20)
+dev.off()
 
-# 瀑布图（Oncoprint 风格，每行=基因，每列=患者）
-oncoplot(
-  maf   = laml_maf,
-  top   = 20,           # 显示突变频率最高的 20 个基因
-  fontSize = 10
-)
+# 同时保存 PDF（矢量图，简历/论文用）
+pdf("D:/Bio-Informatics Case Study/M6_Mutation/figures/01_waterfall_top20.pdf",
+    width = 14, height = 10)
+oncoplot(maf = laml_full, top = 20)
+dev.off()
 ```
 
-### Step 3：聚焦 CAR-T 靶点的突变情况
+### Step 3：Lollipop 图（突变位点在蛋白质上的分布）
 
 ```r
-# 提取靶点相关突变
-targets <- c("FLT3", "CD33", "CLEC12A", "CD38", "IL3RA")
+# 注意：lollipopPlot() 同样不支持 title= 参数
+png("D:/Bio-Informatics Case Study/M6_Mutation/figures/02_lollipop_FLT3.png",
+    width = 2400, height = 1200, res = 200)
+lollipopPlot(maf = laml_full, gene = "FLT3")
+dev.off()
 
-# 检查靶点在 MAF 中的突变频率
-target_summary <- getGeneSummary(laml_maf) %>%
-  filter(Hugo_Symbol %in% targets)
-print(target_summary)
+png("D:/Bio-Informatics Case Study/M6_Mutation/figures/03_lollipop_NPM1.png",
+    width = 2400, height = 1200, res = 200)
+lollipopPlot(maf = laml_full, gene = "NPM1")
+dev.off()
 
-# FLT3 突变类型细分（ITD vs TKD）
-flt3_data <- subsetMaf(laml_maf, genes = "FLT3")
-plotVaf(maf = flt3_data, vafCol = "t_vaf")
+png("D:/Bio-Informatics Case Study/M6_Mutation/figures/04_lollipop_DNMT3A.png",
+    width = 2400, height = 1200, res = 200)
+lollipopPlot(maf = laml_full, gene = "DNMT3A")
+dev.off()
 ```
 
-### Step 4：突变共现 / 互斥分析
+### Step 4：突变共现 / 互斥矩阵
 
 ```r
-# 哪些突变倾向于同时出现（共现）或互斥出现
-somaticInteractions(
-  maf   = laml_maf,
-  top   = 15,
-  pvalue = c(0.05, 0.1)
-)
+png("D:/Bio-Informatics Case Study/M6_Mutation/figures/05_somatic_interactions.png",
+    width = 2400, height = 2000, res = 200)
+somaticInteractions(maf = laml_full, top = 20, pvalue = c(0.05, 0.1))
+dev.off()
 ```
 
-### Step 5：突变亚组 vs 靶点表达（整合 M5 数据）
+### Step 5：FLT3 突变亚组 vs mRNA 表达量箱线图
 
 ```r
-# 有 FLT3 突变 vs 无突变的患者，FLT3 mRNA 表达是否更高？
-flt3_mutated <- getSampleSummary(laml_maf) %>%
-  filter(FLT3 > 0) %>% pull(Tumor_Sample_Barcode)
+library(ggplot2)
 
-surv_df$FLT3_mut_status <- ifelse(
-  substr(surv_df$sample_id, 1, 15) %in% substr(flt3_mutated, 1, 15),
-  "Mutated", "Wild-type"
+# 提取 FLT3 突变样本（取前12位病人ID）
+flt3_mutated <- subsetMaf(maf = laml_full, genes = "FLT3")
+flt3_mut_ids <- substr(
+  as.character(getSampleSummary(flt3_mutated)$Tumor_Sample_Barcode), 1, 12
 )
 
-ggplot(surv_df %>% filter(!is.na(FLT3_expr)),
-       aes(x = FLT3_mut_status, y = log2(FLT3_expr + 1), fill = FLT3_mut_status)) +
-  geom_boxplot() +
-  ggpubr::stat_compare_means() +
-  labs(title = "FLT3 mRNA Expression: Mutated vs Wild-type",
-       y = "FLT3 expression (log2 CPM)", x = "") +
-  theme_bw()
+# 加载 M5 整合数据框（含 FLT3 表达量列）
+analysis_df <- readRDS("D:/Bio-Informatics Case Study/M5_Survival/analysis_df.rds")
+
+# 添加突变状态标签
+analysis_df$FLT3_mutation <- ifelse(
+  analysis_df$patient_id %in% flt3_mut_ids, "Mutated", "Wild-type"
+)
+
+# Wilcoxon 检验 + 箱线图
+wt <- wilcox.test(FLT3 ~ FLT3_mutation, data = analysis_df)
+
+png("D:/Bio-Informatics Case Study/M6_Mutation/figures/06_FLT3_mutation_vs_expression.png",
+    width = 1600, height = 1600, res = 200)
+ggplot(analysis_df, aes(x = FLT3_mutation, y = log2(FLT3 + 1),
+                         fill = FLT3_mutation)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 2, alpha = 0.6) +
+  scale_fill_manual(values = c("Mutated" = "#E74C3C", "Wild-type" = "#3498DB")) +
+  labs(title = "FLT3 mRNA Expression by Mutation Status",
+       subtitle = "TCGA-LAML (n=130)",
+       x = "FLT3 Mutation Status",
+       y = "FLT3 Expression (log2 counts + 1)") +
+  theme_classic(base_size = 14) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5),
+        legend.position = "none") +
+  annotate("text", x = 1.5, y = max(log2(analysis_df$FLT3 + 1)) * 0.98,
+           label = paste0("p = ", round(wt$p.value, 3)), size = 5)
+dev.off()
 ```
 
-## 10.5 预期产出
+## 10.5 实际产出（2026-05-21 完成）
 
-- `fig_oncoprint_top20.png` — AML 突变全景图
-- `fig_FLT3_VAF.png` — FLT3 突变等位基因频率
-- `fig_mutation_cooccurrence.png` — 突变共现/互斥矩阵
-- `fig_FLT3_mut_vs_expr.png` — 突变 vs 表达量箱线图
-- `M6_Mutation_Analysis.html` — 完整报告
+| 文件 | 说明 |
+|------|------|
+| `figures/01_waterfall_top20.png/pdf` | Top 20 突变基因瀑布图 |
+| `figures/02_lollipop_FLT3.png` | FLT3 激酶域突变热点 |
+| `figures/03_lollipop_NPM1.png` | NPM1 C端移码插入热点 |
+| `figures/04_lollipop_DNMT3A.png` | DNMT3A 多域分散突变 |
+| `figures/05_somatic_interactions.png` | 突变共现/互斥矩阵 |
+| `figures/06_FLT3_mutation_vs_expression.png` | FLT3突变 vs mRNA表达（p=0.255） |
+| `01_M6_analysis.R` | 完整分析脚本 |
+| `M6_Report.Rmd` | RMarkdown 报告 |
+
+## 10.6 关键结论
+
+- Top 突变基因：NPM1(8.4%) > TP53(7%) > DNMT3A(6.1%) > FLT3(4.6%)
+- FLT3 突变集中在 PKc_like 激酶域（错义突变），NPM1 突变集中在 C 端（移码插入）
+- FLT3 + DNMT3A 显著共现（p<0.05）：双突变病人预后更差
+- FLT3 DNA 突变不影响 mRNA 表达量（p=0.255）：突变通过激酶功能而非转录水平致病
 
 ---
 
