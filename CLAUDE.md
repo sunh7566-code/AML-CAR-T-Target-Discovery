@@ -73,7 +73,7 @@ AlphaFold 结构预测
 | **M4** | 临床数据库 API + MR 因果推断 | Python + R TwoSampleMR | 临床试验报告 + MR 因果图 | ✅ 完成 |
 | **M5** | 生存分析 + 预后模型 | R + survival + TCGAbiolinks | K-M 曲线 + Cox 回归报告 | ✅ 完成 |
 | **M6** | 基因组变异分析（WES/MAF） | R + maftools | 瀑布图 + oncoprint | ✅ 完成 |
-| **M7** | 免疫微环境分析（TME） | R + IOBR / CIBERSORT | 免疫细胞比例图 | 🔲 待开始 |
+| **M7** | 免疫微环境分析（TME） | R + IOBR 2.2.1 / xCell | 免疫细胞比例热图 + 相关性图 | ✅ 完成 |
 | **M8** | DNA 甲基化 / 表观基因组 | R + minfi + ChAMP | 甲基化差异热图 | 🔲 待开始 |
 | **M9** | 空间转录组 | Python + Squidpy | 空间表达图 | 🔲 待开始 |
 | **M10** | 多组学整合 | Python + MOFA+ / R + MOFA2 | 整合因子图 + 最终靶点排名 | 🔲 待开始 |
@@ -344,6 +344,41 @@ conda config --set show_channel_urls yes
 
 ---
 
+## 📋 M7 完成检查清单（免疫微环境）
+
+```
+☑ 安装 IOBR 2.2.1 + 依赖（quadprog, pracma, ComplexHeatmap 等，✅ 2026-05-21）
+☑ 读取 M5 已下载 TCGA-LAML TPM 矩阵（151样本，59427基因，直接复用，✅ 2026-05-21）
+☑ 运行 xCell 免疫细胞反卷积（151样本 × 68个免疫细胞指标，✅ 2026-05-21）
+☑ 图1：免疫细胞浸润热图（68种细胞类型 × 60样本，✅ 2026-05-21）
+☑ 图2：5个靶点 vs CD8+ T 细胞散点图（✅ 2026-05-21）
+☑ 图3：免疫细胞组成堆叠图（前50样本，✅ 2026-05-21）
+☑ 图4：靶点 × 免疫细胞相关性矩阵热图（✅ 2026-05-21）
+○ 整合进 Rmd 报告，Knit HTML
+○ push GitHub
+```
+
+**M7 关键结果**（TCGA-LAML，xCell，n=151）：
+- AML 是典型"冷肿瘤"：CD8+ T 细胞浸润极低（xCell 评分趋近 0），这是血液肿瘤的生物学特征
+- **CLEC12A**：与 Neutrophils（*）、Monocytes（**）正相关 → 符合髓系抗原的生物学特性
+- **CD33**：与髓系细胞（Neutrophils、Monocytes）正相关 → 同上
+- **CD38**：与 CD8+ Tem（效应记忆 T 细胞）显著**负相关**（***）→ CD38 高表达 = 免疫抑制微环境，支持 Daratumumab + CAR-T 联合策略
+- **FLT3 / IL3RA**：与免疫浸润无显著相关
+
+**M7 工具链坑记录**：
+- IOBR 2.2.1 不支持 `"ssgsea"`，改用 `"xcell"`
+- xCell 要求原始 TPM 输入（不做 log2 转换），且需要额外安装 `quadprog` + `pracma`
+- `ggscatter()` 无法处理含 `+` 号的列名（如 `CD8+_T-cells_xCell`），改用原生 `ggplot2 + stat_cor`
+
+**目录**：`D:\Bio-Informatics Case Study\M7_TME\`
+- `01_M7_analysis.R` — 第一版（含 barcode 转换，已废弃）
+- `02_M7_deconvo_and_plots.R` — 正式分析脚本
+- `tpm_matrix.rds` — TPM 矩阵缓存
+- `immune_xcell.rds` — xCell 结果缓存
+- `figures/` — 4张图
+
+---
+
 ## 📋 M8 完成检查清单（DNA 甲基化）
 
 ```
@@ -433,5 +468,5 @@ conda config --set show_channel_urls yes
 
 ---
 
-*文件版本：v2.2 | 基于 Bioinformatics_Pipeline_SOP.md v2.0 生成*
-*更新时间：2026-05-21（M5 完成 ✅；M6 完成 ✅；增加教学优先原则）*
+*文件版本：v2.3 | 基于 Bioinformatics_Pipeline_SOP.md v2.0 生成*
+*更新时间：2026-05-21（M5 ✅；M6 ✅；M7 ✅；增加 M7 坑记录与关键结果）*

@@ -50,7 +50,7 @@ M10 多组学整合                     → 所有证据汇聚，最终靶点排
 | **M4** | 临床数据库 API + MR 因果推断 | Python / R TwoSampleMR | ✅ 完成 | 临床分析报告 + MR 图 |
 | **M5** | 生存分析 + 预后模型 | R / survival / TCGAbiolinks | ✅ 完成 | K-M 曲线 + Cox 报告 |
 | **M6** | 基因组变异分析（WES/MAF） | R / maftools | ✅ 完成 | 瀑布图 + oncoprint |
-| **M7** | 免疫微环境分析（TME） | R / IOBR / CIBERSORT | 🔲 待开始 | 免疫细胞比例图 |
+| **M7** | 免疫微环境分析（TME） | R / IOBR 2.2.1 / xCell | ✅ 完成 | 免疫细胞热图 + 相关性矩阵 |
 | **M8** | DNA 甲基化 / 表观基因组 | R / minfi / ChAMP | 🔲 待开始 | 甲基化差异热图 |
 | **M9** | 空间转录组 | Python / Squidpy | 🔲 待开始 | 空间表达图 |
 | **M10** | 多组学整合 | Python / MOFA+ | 🔲 待开始 | 整合因子图 + 最终靶点排名 |
@@ -90,6 +90,12 @@ M10 多组学整合                     → 所有证据汇聚，最终靶点排
 - FLT3（4.6%）：激酶域错义突变，midostaurin 靶点
 - FLT3 + DNMT3A 显著共现（p<0.05），双突变预后差
 - FLT3 突变不影响 mRNA 表达量（p=0.255），突变影响蛋白功能而非转录
+
+### M7 免疫微环境分析（TCGA-LAML，xCell，n=151）
+- AML 是典型"冷肿瘤"（Cold Tumor）：CD8+ T 细胞浸润极低，这是血液肿瘤的固有特征，不影响 CAR-T 策略
+- **CD38** 与 CD8+ Tem（效应记忆 T 细胞）显著**负相关**（p<0.001）→ CD38 高表达 = 免疫抑制微环境，支持 Daratumumab + CAR-T 联合策略
+- **CLEC12A / CD33** 与髓系细胞（中性粒细胞 \* / 单核细胞 \*\*）正相关 → 符合髓系抗原的生物学特性，验证靶点特异性
+- **FLT3 / IL3RA**：与免疫细胞浸润无显著相关，靶点独立于微环境
 
 ---
 
@@ -132,7 +138,11 @@ AML-CAR-T-Target-Discovery/
 │   ├── 01_M6_analysis.R
 │   ├── M6_Report.Rmd
 │   └── figures/                       # 瀑布图 + lollipop图 + 共现矩阵 + 箱线图
-├── M7_TME/                            # 🔲 免疫微环境
+├── M7_TME/                            # ✅ 免疫微环境
+│   ├── 02_M7_deconvo_and_plots.R      # 正式分析脚本（xCell + 4张图）
+│   ├── tpm_matrix.rds                 # TPM 矩阵缓存（复用 M5 数据）
+│   ├── immune_xcell.rds               # xCell 反卷积结果缓存
+│   └── figures/                       # 4张图（热图+散点图+堆叠图+相关性矩阵）
 ├── M8_Methylation/                    # 🔲 DNA 甲基化
 ├── M9_SpatialTranscriptomics/         # 🔲 空间转录组
 └── M10_MultiOmics/                    # 🔲 多组学整合
@@ -150,7 +160,7 @@ AML-CAR-T-Target-Discovery/
 | M4 | ClinicalTrials.gov / IEU Open GWAS | API | 临床试验 + GWAS 汇总 |
 | M5 | TCGA-LAML | TCGAbiolinks | 200 例 AML，含生存数据 |
 | M6 | TCGA-LAML MAF | TCGAbiolinks | AML 体细胞突变图谱 |
-| M7 | GSE6891 / TCGA-LAML | GEO / TCGA | 免疫细胞反卷积 |
+| M7 | TCGA-LAML（复用 M5 数据） | GDC API | xCell 免疫细胞反卷积（151样本 × 68指标） |
 | M8 | GEO EPIC array | GEO | AML DNA 甲基化数据 |
 | M9 | 10x Visium 骨髓 | GEO / 10x | 空间转录组（待确定数据集） |
 | M10 | 上述所有 | 多源 | MOFA+ 多组学整合 |

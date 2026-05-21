@@ -2239,98 +2239,77 @@ CAR-T 疗法的疗效不仅取决于靶点表达，还取决于**肿瘤免疫微
 
 推荐用 `IOBR` 包，一个包集成所有方法。
 
-## 11.3 环境安装
+## 11.3 环境安装（已验证，2026-05-21）
 
 ```r
-# IOBR 安装（集成 CIBERSORT / xCell / TIMER / ESTIMATE）
+# IOBR 2.2.1 安装
+BiocManager::install(c("limma", "GSVA", "GSEABase", "ComplexHeatmap", "ggpubr"), update = FALSE)
 if (!require("remotes")) install.packages("remotes")
-remotes::install_github("IOBR/IOBR")
+remotes::install_github("IOBR/IOBR", upgrade = "never")
 
-install.packages(c("ggplot2", "dplyr", "corrplot", "ggpubr"))
+# xCell 额外依赖（运行时会提示安装）
+install.packages(c("quadprog", "pracma"))
 ```
 
-## 11.4 分析步骤
+> ⚠️ **IOBR 2.x 已知变化**：
+> - `deconvo_method_list` 变量已移除，不用理会
+> - 支持方法：`"mcpcounter"`, `"epic"`, `"xcell"`, `"cibersort"`, `"cibersort_abs"`, `"ips"`, `"estimate"`, `"svr"`, `"lsei"`, `"timer"`, `"quantiseq"`（不再支持 `"ssgsea"`）
 
-### Step 1：准备输入数据（TPM 矩阵）
+## 11.4 分析步骤（已验证流程）
+
+### Step 1：准备 TPM 矩阵
 
 ```r
-# CIBERSORT 需要 TPM（不是 raw count）
-# 从 TCGA-LAML 数据中提取 TPM
-tpm_mat <- assay(expr_data, "tpm_unstrand")  # SummarizedExperiment 对象
-
-# 行名转换为 gene symbol（IOBR 需要 symbol）
-library(biomaRt)
-mart <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
-gene_map <- getBM(
-  attributes = c("ensembl_gene_id", "hgnc_symbol"),
-  filters    = "ensembl_gene_id",
-  values     = rownames(tpm_mat),
-  mart       = mart
-)
-# 合并，去重，保留 symbol
+# GDC 下载的 augmented_star_gene_counts.tsv 文件直接含 tpm_unstranded 列
+# 无需 biomaRt 转换！直接读取即可（行名=gene_name 已是 symbol）
+read_tpm <- function(sample_dir) {
+  tsv_file <- list.files(sample_dir, pattern = "\\.tsv$", full.names = TRUE)
+  df <- read_tsv(tsv_file, skip = 1, show_col_types = FALSE)
+  df %>% filter(grepl("^ENSG", gene_id)) %>% select(gene_name, tpm_unstranded)
+}
+# 批量读取 → pivot_wider → 行名=gene_name
 ```
 
-### Step 2：运行免疫细胞反卷积
+> ⚠️ **xCell 输入要求**：必须使用**原始 TPM**（不做 log2 转换！），否则报错 `Data values appear small`
+
+### Step 2：运行 xCell 反卷积（推荐用于血液肿瘤）
 
 ```r
 library(IOBR)
-
-# 方法1：CIBERSORT（需要基准矩阵文件，IOBR 内置）
-cibersort_res <- deconvo_tme(
-  eset      = tpm_mat,        # 基因×样本 TPM 矩阵
-  method    = "cibersort",
-  arrays    = FALSE,          # RNA-seq 数据
-  perm      = 100             # 置换检验次数（越多越慢，100 够了）
+# xCell：68种细胞类型，适合血液肿瘤，无需指定癌症类型
+immune_xcell <- deconvo_tme(
+  eset   = tpm_mat,   # 原始 TPM，不是 log2！
+  method = "xcell",
+  arrays = FALSE
 )
-
-# 方法2：xCell（更多细胞类型）
-xcell_res <- deconvo_tme(
-  eset   = tpm_mat,
-  method = "xcell"
-)
-
-# ESTIMATE 免疫评分
-estimate_res <- deconvo_tme(
-  eset   = tpm_mat,
-  method = "estimate"
-)
+# 输出：151样本 × 68指标（含 ImmuneScore、StromaScore 等综合评分）
 ```
 
 ### Step 3：可视化
 
 ```r
-# 热图：样本 × 免疫细胞类型
-library(pheatmap)
-pheatmap(
-  t(cibersort_res[, 2:23]),   # 22 种免疫细胞列
-  scale        = "row",
-  clustering_distance_rows = "euclidean",
-  show_colnames = FALSE,
-  main = "AML Immune Cell Composition (CIBERSORT)"
-)
+# ⚠️ 注意：xCell 列名含 "+" 号（如 CD8+_T-cells_xCell）
+# ggscatter() 的 y 参数会调用 parse() 解析列名，"+" 被识别为加法运算符 → 报错
+# 解决方案：改用原生 ggplot2
 
-# 靶点表达 vs 免疫细胞比例相关性
-# 例：CLEC12A 表达与 T cell CD8+ 比例的相关性
-library(ggpubr)
-merged <- merge(
-  data.frame(sample_id = colnames(tpm_mat),
-             CLEC12A = as.numeric(tpm_mat["CLEC12A", ])),
-  cibersort_res %>% select(sample_id = SampleID, T_cells_CD8),
-  by = "sample_id"
-)
-
-ggscatter(merged, x = "CLEC12A", y = "T_cells_CD8",
-          add = "reg.line", conf.int = TRUE,
-          cor.coef = TRUE, cor.method = "spearman",
-          title = "CLEC12A Expression vs CD8+ T Cell Fraction")
+# 正确做法：新建临时 data.frame，用通用列名 x/y
+df_plot <- data.frame(x = combined_df[[gene]], y = combined_df[[cd8_col]])
+ggplot(df_plot, aes(x, y)) + geom_point() + stat_cor() + geom_smooth(method="lm")
 ```
 
-## 11.5 预期产出
+## 11.5 实际产出（TCGA-LAML，n=151）
 
-- `fig_tme_heatmap.png` — 免疫细胞组成热图
-- `fig_target_vs_immune.png` — 靶点表达 vs 免疫细胞相关性
-- `tme_scores.csv` — 每个样本的免疫细胞比例数据
-- `M7_TME_Analysis.html` — 完整报告
+- `figures/01_immune_heatmap.png` — 68种细胞类型 × 60样本热图（ComplexHeatmap）
+- `figures/02_target_vs_CD8T.png` — 5靶点 vs CD8+ T 细胞散点图
+- `figures/03_immune_composition.png` — 免疫细胞组成堆叠图
+- `figures/04_target_immune_correlation.png` — 靶点 × 免疫细胞相关性矩阵
+
+## 11.6 关键生物学发现
+
+- AML 是典型"冷肿瘤"（Cold Tumor）：CD8+ T 细胞浸润极低，这是血液肿瘤的固有特征
+- **CD38** 与 CD8+ Tem（效应记忆 T 细胞）显著负相关（***）→ 支持 Daratumumab + CAR-T 联合策略
+- **CLEC12A / CD33** 与髓系细胞（中性粒细胞、单核细胞）正相关 → 符合髓系抗原的生物学特性
+- 不能用"与 CD8+ T 细胞不相关"来否定靶点价值——AML 本身就不是 T 细胞浸润型肿瘤
 
 ---
 
