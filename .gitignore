@@ -8,3 +8,4 @@ M1_bulk_RNAseq/data/*.txt
 M5_Survival/GDC_data/
 M5_Survival/*.tar.gz
 M5_Survival/*.rds
+M5_Survival/GDC_data/
