@@ -9,3 +9,5 @@ M5_Survival/GDC_data/
 M5_Survival/*.tar.gz
 M5_Survival/*.rds
 M5_Survival/GDC_data/
+M4_Clinical_MR/*.tar.gz
+M4_Clinical_MR/Wed_*

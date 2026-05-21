@@ -71,7 +71,7 @@ AlphaFold 结构预测
 | **M2** | 单细胞 RNA-seq 靶点定位 | Python + Scanpy | UMAP 图 + 候选靶点清单 | ✅ 完成 |
 | **M3** | 蛋白质结构 + 分子对接 | AlphaFold3 + ClusPro | 3D 结构图 + 结合能数据 | ✅ 完成 |
 | **M4** | 临床数据库 API + MR 因果推断 | Python + R TwoSampleMR | 临床试验报告 + MR 因果图 | ✅ 完成 |
-| **M5** | 生存分析 + 预后模型 | R + survival + TCGAbiolinks | K-M 曲线 + Cox 回归报告 | 🔲 进行中 |
+| **M5** | 生存分析 + 预后模型 | R + survival + TCGAbiolinks | K-M 曲线 + Cox 回归报告 | ✅ 完成 |
 | **M6** | 基因组变异分析（WES/MAF） | R + maftools | 瀑布图 + oncoprint | 🔲 待开始 |
 | **M7** | 免疫微环境分析（TME） | R + IOBR / CIBERSORT | 免疫细胞比例图 | 🔲 待开始 |
 | **M8** | DNA 甲基化 / 表观基因组 | R + minfi + ChAMP | 甲基化差异热图 | 🔲 待开始 |
@@ -271,17 +271,32 @@ conda config --set show_channel_urls yes
 ## 📋 M5 完成检查清单（生存分析）
 
 ```
-○ 安装 TCGAbiolinks / survival / survminer
-○ 下载 TCGA-LAML 表达矩阵 + 临床数据
-○ 构造生存数据框（OS_time + OS_status）
-○ 按中位数分组，对 5 个候选靶点画 K-M 曲线
-○ 单变量 Cox 回归，输出 HR 表
-○ 整合进 M5_Survival_Analysis.Rmd，Knit HTML
+☑ 安装 TCGAbiolinks / survival / survminer（✅ 2026-05-21）
+☑ 下载 TCGA-LAML 表达矩阵（151个样本，直接 GDC API 下载 tsv 文件，✅ 2026-05-21）
+☑ 获取临床生存数据（GDC REST API，200样本，✅ 2026-05-21）
+☑ 构造生存数据框（OS_time + OS_status，有效样本 173 例）
+☑ 合并表达量 + 生存数据（130 例可分析样本）
+☑ 按中位数分组，对 5 个候选靶点画 K-M 曲线（✅ 2026-05-21）
+☑ 单变量 Cox 回归，输出 HR 表（✅ 2026-05-21）
+○ 整合进 Rmd 报告，Knit HTML
 ○ push GitHub
 ```
 
-**数据集**：TCGA-LAML（约 150 例，含随访数据，TCGAbiolinks 自动下载）
+**M5 关键结果**（单变量 Cox，TCGA-LAML n=130）：
+- IL3RA：HR=1.711，p=0.00188 ⭐⭐（**唯一显著独立预后因子**）
+- FLT3：HR=1.128，p=0.241（趋势但不显著）
+- CD33：HR=1.018，p=0.850（ns）
+- CLEC12A：HR=1.037，p=0.688（ns）
+- CD38：HR=0.972，p=0.761（ns）
+
+**数据获取方式**（Windows 下 TCGAbiolinks GDCdownload 有 tar.exe 兼容性 bug）：
+- 表达矩阵：直接 httr GET GDC API 下载 151 个 tsv 文件到 `GDC_data/TCGA-LAML/`
+- 临床数据：POST `api.gdc.cancer.gov/cases` REST API（避免 GDCquery_clinic 超时）
+
 **目录**：`D:\Bio-Informatics Case Study\M5_Survival\`
+- `01_download_data.R` — 数据下载脚本
+- `02_full_analysis.R` — 完整分析脚本（有缓存直接加载）
+- `figures/` — 5张K-M曲线 + Cox森林图
 
 ---
 
